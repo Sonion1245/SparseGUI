@@ -2079,7 +2079,10 @@ class SubWindow(Menu):
         self._close_button = self.title_bar_text_font.render("X", True, COLORS["WHITE"])
         self._close_button_position = (self.size[0] - self._close_button.get_width()-20, 5)
 
-        self.minimized = False
+        self._minimize_button = self.title_bar_text_font.render("-", True, COLORS["WHITE"])
+        self._minimize_button_position = (self.size[0] - self._close_button.get_width()-50, 5)
+
+        self._minimized = False
 
 
     def update_title_surface(self):
@@ -2101,6 +2104,14 @@ class SubWindow(Menu):
     def title_text_color(self, value: tuple[int, int, int]):
         self._title_text_color = value
         self.update_title_surface()
+
+    @property
+    def minimized(self):
+        return self._minimized
+    
+    @minimized.setter
+    def minimized(self, value: bool):
+        self._minimized = value
 
     @property
     def title(self):
@@ -2130,24 +2141,43 @@ class SubWindow(Menu):
         self._size = new_size
         self.update_surface()
 
+    def _buttons(self):
+        final_position = (
+            self.screen_position[0] + self._close_button_position[0],
+            self.screen_position[1] + self._close_button_position[1]
+        )
+
+        if self._close_button.get_rect(topleft=final_position).collidepoint(_pygame.mouse.get_pos()):
+            self.destroy()
+        
+        final_position2 = (
+            self.screen_position[0] + self._minimize_button_position[0],
+            self.screen_position[1] + self._minimize_button_position[1]
+        )
+
+        if self._minimize_button.get_rect(topleft=final_position2).collidepoint(_pygame.mouse.get_pos()):
+            self.minimized = not self.minimized
+            if self.minimized:
+                for component in self.components.copy():
+                    if isinstance(component, ResizeableComponent):
+                        self._saved = component
+                        self.components.remove(component)
+            else:
+                self.components.append(self._saved)
+                self._saved = None
+
     def handle_event(self, event: pygame_event_type):
         super().handle_event(event)
 
         if event.type == _pygame.MOUSEBUTTONDOWN and self.focused:
-            final_position = (
-                self.screen_position[0] + self._close_button_position[0],
-                self.screen_position[1] + self._close_button_position[1]
-            )
+            self._buttons()
 
-            if self._close_button.get_rect(topleft=final_position).collidepoint(_pygame.mouse.get_pos()):
-                self.destroy()
-
+    def update(self, dt: float):
+        return super().update(dt, not self.minimized)
 
     def draw(self, target_surface: _pygame.Surface=None) -> None:
         if self.hidden: return
         if self.size[0] <= 0 or self.size[1] <= 0: return
-
-        final_pos = (self.position[0], self.position[1]-self.get_menu_scroll())
         
         if self.layout is not None and len(self.children) > 0:
             self.layout.update()
@@ -2158,7 +2188,9 @@ class SubWindow(Menu):
 
         self.children.sort(key=lambda a: a.Z)
 
-        self.draw_elements(self.sub_surface)
+        if not self.minimized:
+            self.draw_elements(self.sub_surface)            
+        
         self.titlebar_surface.blit(self._cached_text_surface, (5, self.title_bar_height/2-self._cached_text_surface.get_height()/2))
 
         if self.scrollable and self.max_scroll > 0:
@@ -2178,7 +2210,7 @@ class SubWindow(Menu):
         if self.stroke_thickness > 0:
             stroke_rect = self.get_stroke_rect()
             _pygame.draw.rect(target_surface, self.stroke_color, (stroke_rect[0], stroke_rect[1], stroke_rect[2], 
-                                                                  stroke_rect[3]
+            stroke_rect[3] if not self.minimized else self.title_bar_height + self.stroke_thickness*1.5 
                                                                   ), border_radius=self.get_border_radius())
         _pygame.draw.rect(self.surface, self.title_bar_color, 
                         ((0, 0), (self.size[0], self.titlebar_surface.get_height())), border_top_left_radius=self.get_border_radius(), 
@@ -2186,15 +2218,17 @@ class SubWindow(Menu):
 
         self.surface.blit(self.titlebar_surface, (0, 0))
         
-        _pygame.draw.rect(self.surface, self.background_color, (0, self.title_bar_height, *self.sub_surface.get_size()), border_bottom_left_radius=self.get_border_radius(), 
+        _pygame.draw.rect(self.surface, self.background_color, (0, self.title_bar_height, self.sub_surface.get_width(), self.sub_surface.get_height() if not self.minimized else 0), border_bottom_left_radius=self.get_border_radius(), 
                         border_bottom_right_radius=self.get_border_radius())
 
-        self.surface.blit(self.sub_surface, (0, self.title_bar_height))
+        if not self.minimized:
+            self.surface.blit(self.sub_surface, (0, self.title_bar_height))
 
         self.surface.blit(self._close_button, self._close_button_position)
+        self.surface.blit(self._minimize_button, self._minimize_button_position)
 
-        _pygame.draw.line(self.surface, self.stroke_color, (0, self.title_bar_height), (self.size[0], self.title_bar_height), 3)
-        target_surface.blit(self.surface, final_pos)
+        _pygame.draw.line(self.surface, self.stroke_color, (0 if not self.minimized else -self.stroke_thickness, self.title_bar_height), (self.size[0] if not self.minimized else self.size[0]+self.stroke_thickness, self.title_bar_height), 3)
+        target_surface.blit(self.surface, (self.position[0], self.position[1]-self.get_menu_scroll()))
 
 # ----------------------------
 # LAYOUTS
