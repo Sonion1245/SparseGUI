@@ -23,6 +23,8 @@
 * Z ordering of elements
 * Coordinate System
 * Composition Component System
+* Layout System
+* Cached text surfaces.
 
 Example script to start with
 ```python
