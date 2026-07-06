@@ -1,6 +1,6 @@
 # SparseGUI
 
- Fully built retained-mode GUI framework built using python meant for pygame wihout needing to manually draw rects and poll actions done to them. 
+ Fully built retained-mode GUI library built using python meant for pygame wihout needing to manually draw rects and poll actions done to them. 
 
  ## How to install
  Beofre starting you will need to install python. To install watch this https://www.youtube.com/watch?v=YKSpANU8jPE 
