@@ -2341,10 +2341,4 @@ def draw_tree_view(tree_view: list[tuple[UIElement, int]], surface: _pygame.Surf
 print(f"SparseGUI v1.2.4 (Python {_sys.version[0:7]}, pygame {_pygame.ver})")
 
 # Defining what is imported if import * is used on this module
-__all__: list[str] = [
-    "LayoutAlignment", "COLORS", "init", # Globals
-    "UIElement", "TextLabel", "TextButton", "TextBox", "Bar", "Menu", "CheckBox", "Canvas", "DropDownMenu", "MultiLineTextBox", "ImageButton", 
-    "ImageLabel", "SubWindow", # Library objects
-    "MenuLayout", "NormalLayout", "FlowLayout", # Library Menu layouts/Element modifiers
-    "get_elements_tree", "draw_text", "draw_tree_view", # Library helpers
-]
+__all__: list[str] = [name for name, obj in globals().items() if name[0] != "_" or name.startswith("_")]
