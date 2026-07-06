@@ -2140,7 +2140,7 @@ class SubWindow(Menu):
             )
 
             if self._close_button.get_rect(topleft=final_position).collidepoint(_pygame.mouse.get_pos()):
-                self.tween_size((0, 0), 0.45, lambda: self.destroy())
+                self.destroy()
 
 
     def draw(self, target_surface: _pygame.Surface=None) -> None:
