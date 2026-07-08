@@ -281,6 +281,20 @@ class Canvas:
         
         return results
 
+    def any_gui_active(self) -> bool:
+        stop = False
+        def walk(item: UIElement):
+            if hasattr(item, "focused") and item.focused and not stop:
+                stop = True
+                
+                for child in item.children:
+                    walk(child)
+        
+        for child in self.layer:
+            walk(child)
+
+        return stop
+
     def get_size(self) -> Coordinate:
         return self.surface.get_size()
 
@@ -659,7 +673,7 @@ class UIElement:
         self.hidden = True
         return self
 
-    def update(self, dt: float) -> None:
+    def update(self, dt: float, update_elements: bool=True) -> None:
         self.screen_position = self.get_screen_position()
         self.local_mouse_position = self.get_local_mouse_position()
 
@@ -676,8 +690,9 @@ class UIElement:
         self.mouse_hovering = self.surface.get_rect(topleft=self.position).collidepoint(self.local_mouse_position)
         self.update_components()
 
-        for element in self.children:
-            element.update(dt)
+        if update_elements:
+            for element in self.children:
+                element.update(dt)
         
         for tween in self._active_tweens.copy():
             tween.update(dt)
@@ -1874,6 +1889,7 @@ class Menu(UIElement):
         self.scroll_speed = scroll_speed
         self.scroll_velocity = 0
         self._scroll_decrement = self.scroll_speed/20
+        self._stop_handling_children_events = False
     
     def set_scrollable(self, enabled: bool) -> _Self:
         self.scrollable = enabled
@@ -1908,7 +1924,8 @@ class Menu(UIElement):
         return self.layout.__class__.__name__
 
     def handle_event(self, event: pygame_event_type) -> None:
-        self.handle_event_elements(event)
+        if not self._stop_handling_children_events:
+            self.handle_event_elements(event)
 
         if event.type == _pygame.MOUSEBUTTONDOWN and event.button == 1 and not self.hidden and self.mouse_over_parent():
             local_p = self.local_mouse_position if self.parent else event.pos
@@ -2030,9 +2047,6 @@ class CheckBox(TextButton):
         )
 
     def handle_event(self, event: pygame_event_type) -> None:
-        '''
-            Overrides the normal clickable component to make sure the user clicked on the checkbox.
-        '''
         self.handle_event_components(event)
 
     def draw(self, target_surface: _pygame.Surface) -> None:
@@ -2149,22 +2163,6 @@ class SubWindow(Menu):
 
         if self._close_button.get_rect(topleft=final_position).collidepoint(_pygame.mouse.get_pos()):
             self.destroy()
-        
-        final_position2 = (
-            self.screen_position[0] + self._minimize_button_position[0],
-            self.screen_position[1] + self._minimize_button_position[1]
-        )
-
-        if self._minimize_button.get_rect(topleft=final_position2).collidepoint(_pygame.mouse.get_pos()):
-            self.minimized = not self.minimized
-            if self.minimized:
-                for component in self.components.copy():
-                    if isinstance(component, ResizeableComponent):
-                        self._saved = component
-                        self.components.remove(component)
-            else:
-                self.components.append(self._saved)
-                self._saved = None
 
     def handle_event(self, event: pygame_event_type):
         super().handle_event(event)
@@ -2225,7 +2223,7 @@ class SubWindow(Menu):
             self.surface.blit(self.sub_surface, (0, self.title_bar_height))
 
         self.surface.blit(self._close_button, self._close_button_position)
-        self.surface.blit(self._minimize_button, self._minimize_button_position)
+        #self.surface.blit(self._minimize_button, self._minimize_button_position)
 
         _pygame.draw.line(self.surface, self.stroke_color, (0 if not self.minimized else -self.stroke_thickness, self.title_bar_height), (self.size[0] if not self.minimized else self.size[0]+self.stroke_thickness, self.title_bar_height), 3)
         target_surface.blit(self.surface, (self.position[0], self.position[1]-self.get_menu_scroll()))
