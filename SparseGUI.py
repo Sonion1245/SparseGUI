@@ -211,7 +211,7 @@ class _Tween:
                 self.on_end()
 
 # ----------------------------
-#  DATA CLASSES
+# DATA CLASSES
 # ----------------------------
 
 class VideoElementData:
