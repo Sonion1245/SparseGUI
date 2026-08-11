@@ -4,7 +4,9 @@
     -
     
     Retained-mode UILibrary written in python 3.13.3 pygame 2.6.1. Allows for well running and comprehensive UI in pygame in a parent child 
-    hierarchy without needing to manually drawn to surfaces. Allows for easier GUI work and has a built set of diverse GUI elements.
+    hierarchy without needing to manually drawn to surfaces. Allows for easier GUI work and has a built set of diverse GUI elements.\n
+
+    (**NOTE**: UISystem was custom made before hand, not stolen)
 '''
 
 # ----------------------------
@@ -99,7 +101,7 @@ class LayoutAlignment(_Enum):
 
 class TextXAlignment(_Enum):
     '''
-        Determines where text goes inside elements on the X axis (Button, TextLabel are supported currently).
+        Determines where text goes inside elements on the X axis (TextButton, TextLabel are supported currently).
     '''
     left = 0
     middle = 1
@@ -107,7 +109,7 @@ class TextXAlignment(_Enum):
 
 class TextYAlignment(_Enum):
     '''
-        Determines where text goes inside elements on the Y axis (Button, TextLabel are supported currently).
+        Determines where text goes inside elements on the Y axis (TextButton, TextLabel are supported currently).
     '''
     top = 0
     middle = 1
@@ -209,6 +211,21 @@ class _Tween:
                 self.on_end()
 
 # ----------------------------
+#  DATA CLASSES
+# ----------------------------
+
+class VideoElementData:
+    '''
+        Video data given to a VideoElement for it to playback from.
+    '''
+    def __init__(self, frames: list[_pygame.Surface], frame_rate: int):
+        self.frames = frames
+        self.frame_rate = frame_rate
+
+    def get_video_frame(self, frame: int) -> _pygame.Surface:
+        return self.frames[min(frame, len(self.frames)-1)]
+
+# ----------------------------
 # CANVAS
 # ----------------------------
 
@@ -217,15 +234,14 @@ class Canvas:
     The Canvas at which the top level widgets parented to. Call .update([event list here]) inside a game loop.\n
     **layer**: list[UIElement] | UIelement | None
     '''
-    def __init__(self, draw_surface: _pygame.Surface, screen_size: Coordinate=(500, 400), layer: list | None=None, 
-                 fill_color: tuple[int, int, int]=COLORS["TRANSPARENT"], position: Coordinate=(0, 0)):
+    def __init__(self, screen_size: Coordinate=(500, 400), layer: list | None=None, 
+                 fill_color: tuple[int, int, int]=COLORS["TRANSPARENT"], position: Coordinate | None=None):
         self.layer = layer or []
         self.hidden = False
         self.surface = _pygame.Surface(screen_size, _pygame.SRCALPHA)
         self.clip_root = True
         self.fill_color = fill_color
-        self.draw_surface = draw_surface
-        self.position = position
+        self.position = position or (0, 0)
 
         if self.layer:
             for element in layer:
@@ -250,7 +266,6 @@ class Canvas:
 
         self.hidden = True
         self.fill_color = COLORS["TRANSPARENT"]
-        self.draw_surface = None
         
         for element in self.layer:
             element.destroy()
@@ -281,19 +296,27 @@ class Canvas:
         
         return results
 
-    def any_gui_active(self) -> bool:
+    def any_gui_active(self) -> tuple[bool, _Any]:
+        '''
+            Returns if any GUI is currently active. If so then returns a tuple of True and the element.
+        '''
         stop = False
+        element = None
         def walk(item: UIElement):
+            nonlocal stop, element
+
             if hasattr(item, "focused") and item.focused and not stop:
                 stop = True
+                element = item
                 
-                for child in item.children:
-                    walk(child)
+                if not stop:
+                    for child in item.children:
+                        walk(child)
         
         for child in self.layer:
             walk(child)
 
-        return stop
+        return stop, element
 
     def get_size(self) -> Coordinate:
         return self.surface.get_size()
@@ -312,26 +335,22 @@ class Canvas:
                 for event in events:
                     self.layer.handle_event(event)
 
-    def update(self, dt: float):
+    def update(self, dt: float, surface: _pygame.Surface):
         ''' Updates .layer elements then draws them. '''
         if self.hidden: return
 
-        self.surface.fill(self.fill_color)
+        self.surface.fill(COLORS["TRANSPARENT"])
 
         self.layer.sort(key=lambda a: a.Z)
 
         if self.layer:
-            if isinstance(self.layer, list):
-                for element in self.layer:
-                    if element.hidden: continue
+            for element in self.layer:
+                if element.hidden: continue
 
-                    element.update(dt)
-                    element.draw(self.surface if self.clip_root else self.draw_surface)
-            else:
-                self.layer.update(dt)
-                self.layer.draw(self.surface if self.clip_root else self.draw_surface)
+                element.update(dt)
+                element.draw(self.surface)
 
-        self.draw_surface.blit(self.surface, self.position)
+        surface.blit(self.surface, (0, 0))
 
 # ----------------------------
 # BASE CLASSES
@@ -396,15 +415,15 @@ class UIElement:
         
         return current
 
-    def add_component(self, componet_type, *args, **kwargs) -> _Self:
+    def add_component(self, componet_type, *args, **kwargs) -> tuple[_Self, _Any]:
         '''
-            This adds a componet (UIComponent) to the element.
+            This adds a componet (UIComponent) to the element. Returns self and the component instance made.
         '''
         componet_ins = componet_type(self, *args, **kwargs)
         componet_ins.init()
 
         self.components.append(componet_ins)
-        return self
+        return self, componet_ins
 
     def remove_component(self, componet_instance) -> _Self:
         '''
@@ -491,7 +510,7 @@ class UIElement:
         try:
             scroll_percent = max(0, min(scroll_y / max_scroll, 1))
         except ZeroDivisionError as e:
-            scroll_percent = 0.1
+            scroll_percent = 0.01
 
         scrollbar_y = scroll_percent * (
             self.surface.get_height() - scrollbar_size[1]
@@ -787,14 +806,17 @@ class UIElement:
         '''
         self.surface.fill(COLORS["TRANSPARENT"])
         pos = (self.position[0], self.position[1]-self.get_menu_scroll())
-        _pygame.draw.rect(target_surface, self.stroke_color, self.get_stroke_rect(), border_radius=self.get_border_radius())
+
+        _pygame.draw.rect(target_surface, self.stroke_color, self.get_stroke_rect(), border_radius=self.get_border_radius(), width=self.stroke_thickness)
         _pygame.draw.rect(target_surface, self.background_color, (*pos, *self.size), border_radius=self.get_border_radius(0))
+        self.draw_elements(target_surface)
+
         target_surface.blit(self.surface, pos)
     
     def handle_event(self, event: pygame_event_type) -> None:
         ''' Handles the element interactivity. This is a placeholder and just handles components until overriden '''
         ...
-        self.handle_event_components(event)
+        self.handle_event_elements(event)
 
     def __str__(self):
         return f"{self.name}"
@@ -1060,7 +1082,7 @@ class ResizeableComponent(UIComponent):
 
 class TextLabel(UIElement):
     ''' Displayable text as a element. '''
-    def __init__(self, text: str="Hello world!", parent: _Self=None, position: Coordinate=(0, 0), text_size: int=15, 
+    def __init__(self, text: str="Hello world!", parent: _Self=None, position: Coordinate=(0, 0), 
                 text_color: tuple[int, int, int]=None, name: str="TextObject", font: _pygame.font.Font=None,
                 text_alignment: tuple[TextXAlignment, TextYAlignment]=(TextXAlignment.middle, TextYAlignment.middle)):
         super().__init__(parent, (0, 0), position, (0, 0, 0, 0), 0, children=[], name=name)
@@ -1084,9 +1106,6 @@ class TextLabel(UIElement):
         self._text = value
         self.cached_text_surface = self.font.render(self.text, True, self.text_color)
         self.size = self.cached_text_surface.get_size()
-
-    def handle_event(self, event: pygame_event_type):
-        self.handle_event_components(event)
 
     def get_text_y_pos(self) -> float:
         '''
@@ -1120,8 +1139,8 @@ class TextLabel(UIElement):
 
     def draw(self, target_surface: _pygame.Surface) -> None:
         self.surface.fill(self.background_color)
-
         self.surface.blit(self.cached_text_surface, self.get_text_pos())
+        self.draw_elements(target_surface)
         target_surface.blit(self.surface, (self.position[0], self.position[1]-self.get_menu_scroll()))
 
 class ImageLabel(UIElement):
@@ -1155,7 +1174,8 @@ class ImageLabel(UIElement):
     def draw(self, target_surface: _pygame.Surface):
         self.surface.fill(self.background_color)
         self.surface.blit(self._image, (0, 0))
-        _pygame.draw.rect(target_surface, self.stroke_color, self.get_stroke_rect())
+        _pygame.draw.rect(target_surface, self.stroke_color, self.get_stroke_rect(), border_radius=self.get_border_radius(), width=self.stroke_thickness)
+        self.draw_elements(target_surface)
         target_surface.blit(self.surface, (self.position[0], self.position[1]-self.get_menu_scroll()))
 
 class TextButton(UIElement):
@@ -1181,9 +1201,9 @@ class TextButton(UIElement):
         self.text = self._text
         self._final_color = self.background_color
 
-        self.add_component(ClickableComponent)
-        self.components[0].should_click = lambda _: self.clickable
-        self.components[0].on_click = self.action
+        self.click_component: ClickableComponent = self.add_component(ClickableComponent)[1]
+        self.click_component.should_click = lambda _: self.clickable
+        self.click_component.on_click = self.action
 
         self.text_alignment_x = text_alignment[0]
         self.text_alignment_y = text_alignment[1]
@@ -1240,7 +1260,7 @@ class TextButton(UIElement):
             self._final_color = self.selected_color
     
     def on_mouse_hover(self, entering, mouse_enter_pos):
-        self.components[0].on_mouse_hover(entering, mouse_enter_pos)
+        self.click_component.on_mouse_hover(entering, mouse_enter_pos)
 
         if not entering:
             self._final_color = self.background_color
@@ -1261,8 +1281,9 @@ class TextButton(UIElement):
 
         self.surface.blit(self.cached_text_surface, self.get_text_pos())
         if self.stroke_thickness > 0: 
-            _pygame.draw.rect(target_surface, self.stroke_color, self.get_stroke_rect(), border_radius=self.get_border_radius())
+            _pygame.draw.rect(target_surface, self.stroke_color, self.get_stroke_rect(), border_radius=self.get_border_radius(), width=self.stroke_thickness)
         _pygame.draw.rect(target_surface, self._final_color, (*pos, *self.size), border_radius=self.get_border_radius(0))
+
         target_surface.blit(self.surface, pos)
 
 class ImageButton(ImageLabel):
@@ -1278,12 +1299,12 @@ class ImageButton(ImageLabel):
         self.clickable = clickable
         self.action = action
 
-        self.add_component(ClickableComponent)
-        self.components[0].should_click = lambda _: self.clickable
-        self.components[0].on_click = self.action
+        self.click_component = self.add_component(ClickableComponent)[1]
+        self.click_component.should_click = lambda _: self.clickable
+        self.click_component.on_click = self.action
 
     def on_mouse_hover(self, entering, mouse_enter_pos):
-        self.components[0].on_mouse_hover(entering, mouse_enter_pos)
+        self.click_component.on_mouse_hover(entering, mouse_enter_pos)
 
     def handle_event(self, event: pygame_event_type) -> None:
         self.handle_event_elements(event)
@@ -1315,6 +1336,7 @@ class TextBox(UIElement):
         self.editable = True
         self.held_key = False
         self._held_key_tick = _time.time()
+        self._held_key_code = ""
         
         def undo(context: str, value: _Any):
             if value["type"] == "backspace" or value["type"] == "delete" or value["type"] == "char_add":
@@ -1544,7 +1566,7 @@ class TextBox(UIElement):
         self.draw_elements(self.surface)
         
         if self.stroke_thickness > 0: 
-            _pygame.draw.rect(target_surface, self.stroke_color, self.get_stroke_rect(), border_radius=self.get_border_radius())
+            _pygame.draw.rect(target_surface, self.stroke_color, self.get_stroke_rect(), border_radius=self.get_border_radius(), width=self.stroke_thickness)
 
         pos = (self.position[0], self.position[1]-self.get_menu_scroll())
 
@@ -1590,6 +1612,7 @@ class MultiLineTextBox(UIElement):
     def on_mouse_hover(self, entering, mouse_enter_pos):
         if self.hidden:
             return
+
         if not self.editable:
             return
         _pygame.mouse.set_cursor(_pygame.SYSTEM_CURSOR_IBEAM if entering else _pygame.SYSTEM_CURSOR_ARROW)
@@ -1688,7 +1711,8 @@ class MultiLineTextBox(UIElement):
         return self
 
     def handle_event(self, event: pygame_event_type):
-        self.handle_event_components(event)
+        self.handle_event_elements(event)
+
         if event.type == _pygame.MOUSEBUTTONDOWN and event.button == 1 and not self.hidden:
             if not hasattr(self, "on_selected"):
                 result = self.mouse_hovering
@@ -1818,7 +1842,8 @@ class MultiLineTextBox(UIElement):
 
         pos = (self.position[0], self.position[1]-self.get_menu_scroll())
 
-        if self.stroke_thickness > 0: _pygame.draw.rect(target_surface, self.stroke_color, self.get_stroke_rect(), border_radius=self.get_border_radius())
+        if self.stroke_thickness > 0: 
+            _pygame.draw.rect(target_surface, self.stroke_color, self.get_stroke_rect(), border_radius=self.get_border_radius(), width=self.stroke_thickness)
         _pygame.draw.rect(target_surface, self.background_color, (*pos, *self.size), border_radius=self.get_border_radius(0))
         target_surface.blit(self.surface, pos)
 
@@ -1828,12 +1853,12 @@ class Bar(UIElement):
     '''
     def __init__(self, parent: UIElement=None, size: Coordinate=(150, 25), position: Coordinate=(0, 0), 
                  background_color: tuple[int, int, int]=None, foreground_color: tuple[int, int, int]=COLORS["WHITE"], stroke_thickness: int=4, 
-                 stroke_color=COLORS["BLACK"], children: list[UIElement]=None, name: str="Bar", border_radius: int=0):
+                 stroke_color=COLORS["BLACK"], children: list[UIElement]=None, name: str="Bar", border_radius: int=0, resizeable: bool=True):
         super().__init__(parent, size, position, background_color, stroke_thickness, stroke_color, children=children, name=name, border_radius=border_radius)
         self.bar_percent = 0.5
         self.resize_click_range = 30
         self.foreground_color = foreground_color
-        self.resizable = True
+        self.resizeable = resizeable
         self.resizing = False
 
     def set_percent(self, new_percent: float) -> _Self:
@@ -1845,7 +1870,8 @@ class Bar(UIElement):
 
     def handle_event(self, event: pygame_event_type) -> None:
         self.handle_event_elements(event)
-        if event.type == _pygame.MOUSEBUTTONDOWN and event.button == 1 and self.mouse_over_parent() and self.resizable:
+
+        if event.type == _pygame.MOUSEBUTTONDOWN and event.button == 1 and self.mouse_over_parent() and self.resizeable:
             pos = self.local_mouse_position if self.parent else _pygame.mouse.get_pos()
             
             handle_x = self.size[0] * self.bar_percent
@@ -1864,8 +1890,10 @@ class Bar(UIElement):
         self.surface.fill(COLORS["TRANSPARENT"])
 
         _pygame.draw.rect(self.surface, self.foreground_color, (0, 0, self.size[0]*self.bar_percent, self.size[1]), border_radius=self.get_border_radius())
-        if self.stroke_thickness > 0: _pygame.draw.rect(target_surface, self.stroke_color, self.get_stroke_rect(), border_radius=self.get_border_radius())
+        if self.stroke_thickness > 0: 
+            _pygame.draw.rect(target_surface, self.stroke_color, self.get_stroke_rect(), border_radius=self.get_border_radius(), width=self.stroke_thickness)
         _pygame.draw.rect(target_surface, self.background_color, (*final_pos, *self.size), border_radius=self.get_border_radius(0))
+        self.draw_elements(self.surface)
         target_surface.blit(self.surface, final_pos)
 
 class Menu(UIElement): 
@@ -2009,7 +2037,8 @@ class Menu(UIElement):
             )
             self.current_scrollbar_rect = scrollbar_rect
 
-        if self.stroke_thickness > 0: _pygame.draw.rect(target_surface, self.stroke_color, self.get_stroke_rect(), border_radius=self.get_border_radius())
+        if self.stroke_thickness > 0: 
+            _pygame.draw.rect(target_surface, self.stroke_color, self.get_stroke_rect(), border_radius=self.get_border_radius(), width=self.stroke_thickness)
         _pygame.draw.rect(target_surface, self.background_color, (*final_pos, *self.size), border_radius=self.get_border_radius(0))
         target_surface.blit(self.surface, final_pos)
 
@@ -2034,7 +2063,7 @@ class CheckBox(TextButton):
         self.on_flip = on_flip
         height = self.size[1]-15
         self.check_box_rect = _pygame.Rect(5, self.size[1]/2-height/2, self.size[0]*0.10, height)
-        self.components[0].should_click = should_click
+        self.click_component.should_click = should_click
 
     def get_value(self) -> bool:
         return self._checked
@@ -2047,7 +2076,7 @@ class CheckBox(TextButton):
         )
 
     def handle_event(self, event: pygame_event_type) -> None:
-        self.handle_event_components(event)
+        self.handle_event_elements(event)
 
     def draw(self, target_surface: _pygame.Surface) -> None:
         self.surface.fill(COLORS["TRANSPARENT"])
@@ -2058,8 +2087,10 @@ class CheckBox(TextButton):
         _pygame.draw.rect(self.surface, box_color, self.check_box_rect)
         self.surface.blit(self.cached_text_surface, (self.size[0]*0.18, self.size[1]/2-self.cached_text_surface.get_height()/2))
 
-        if self.stroke_thickness > 0: _pygame.draw.rect(target_surface, self.stroke_color, self.get_stroke_rect(), border_radius=self.get_border_radius())
+        if self.stroke_thickness > 0: 
+            _pygame.draw.rect(target_surface, self.stroke_color, self.get_stroke_rect(), border_radius=self.get_border_radius(), width=self.stroke_thickness)
         _pygame.draw.rect(target_surface, self.background_color, (*final_pos, *self.size), border_radius=self.get_border_radius(0))
+        self.draw_elements(self.surface)
         target_surface.blit(self.surface, final_pos)
 
 class SubWindow(Menu):
@@ -2068,7 +2099,7 @@ class SubWindow(Menu):
         **NOTE: Scrollbar visual may clip out of the window slightly.**
     '''
     def __init__(self, position: Coordinate=(0, 0), size: Coordinate=(350, 200), children: list[UIElement]=None, 
-                stroke_thickness: int=3, background_color: tuple[int, int, int]=None, parent: UIElement=None, name: str="ScrollableMenu", 
+                stroke_thickness: int=3, background_color: tuple[int, int, int]=None, parent: UIElement=None, name: str="SubWindow", 
                 max_scroll: int=0, title: str="Sub Window!", title_bar_height: int=25, border_radius: int=0, title_text_color: tuple[int, int, int]=COLORS["WHITE"],
                 title_bar_color: tuple[int, int, int]=COLORS["LIGHTER-GRAY"], title_bar_font: _pygame.font.Font | None=None):
         super().__init__(position, size, children, stroke_thickness, background_color, parent, name, max_scroll, border_radius=border_radius)
@@ -2083,11 +2114,9 @@ class SubWindow(Menu):
 
         self._title_text_color = title_text_color
 
-        self.components = [
-            DragComponent(self)
-        ]
+        self.drag_component: DragComponent = self.add_component(DragComponent)[1]
 
-        self.components[0].should_start_drag = lambda pos: self.titlebar_surface.get_rect(topleft=self.screen_position).collidepoint(pos)
+        self.drag_component.should_start_drag = lambda pos: self.titlebar_surface.get_rect(topleft=self.screen_position).collidepoint(pos)
         self._border_radius = self.border_radius
 
         self._close_button = self.title_bar_text_font.render("X", True, COLORS["WHITE"])
@@ -2188,7 +2217,7 @@ class SubWindow(Menu):
 
         if not self.minimized:
             self.draw_elements(self.sub_surface)            
-        
+
         self.titlebar_surface.blit(self._cached_text_surface, (5, self.title_bar_height/2-self._cached_text_surface.get_height()/2))
 
         if self.scrollable and self.max_scroll > 0:
@@ -2207,9 +2236,11 @@ class SubWindow(Menu):
 
         if self.stroke_thickness > 0:
             stroke_rect = self.get_stroke_rect()
-            _pygame.draw.rect(target_surface, self.stroke_color, (stroke_rect[0], stroke_rect[1], stroke_rect[2], 
-            stroke_rect[3] if not self.minimized else self.title_bar_height + self.stroke_thickness*1.5 
-                                                                  ), border_radius=self.get_border_radius())
+            _pygame.draw.rect(target_surface, (self.stroke_color[0], self.stroke_color[1], self.stroke_color[2]), 
+                              (stroke_rect[0], stroke_rect[1], stroke_rect[2], stroke_rect[3] if not self.minimized else 
+                            self.title_bar_height + self.stroke_thickness*1.5 ), 
+            border_radius=self.get_border_radius(), width=self.stroke_thickness)
+
         _pygame.draw.rect(self.surface, self.title_bar_color, 
                         ((0, 0), (self.size[0], self.titlebar_surface.get_height())), border_top_left_radius=self.get_border_radius(), 
                         border_top_right_radius=self.get_border_radius())
@@ -2227,6 +2258,71 @@ class SubWindow(Menu):
 
         _pygame.draw.line(self.surface, self.stroke_color, (0 if not self.minimized else -self.stroke_thickness, self.title_bar_height), (self.size[0] if not self.minimized else self.size[0]+self.stroke_thickness, self.title_bar_height), 3)
         target_surface.blit(self.surface, (self.position[0], self.position[1]-self.get_menu_scroll()))
+
+class VideoElement(UIElement):
+    '''
+        A element that playbacks loaded VideoData.
+    '''
+    def __init__(self, parent: UIElement=None, size: Coordinate=(400, 250), position: Coordinate=(0, 0), 
+                 background_color: tuple[int, int, int]=None, foreground_color: tuple[int, int, int]=COLORS["WHITE"], stroke_thickness: int=4, 
+                 stroke_color=COLORS["BLACK"], children: list[UIElement]=None, name: str="VideoElement", border_radius: int=0, 
+                 video_data: VideoElementData | None=None):
+        super().__init__(parent, size, position, background_color, stroke_thickness, stroke_color, children, border_radius, name)
+        self.video_data = video_data or VideoElementData([], 60)
+        
+        self.current_frame = 0
+        self._timer = 0
+        self._scale_frames = True
+        self.paused = False
+
+    def play(self) -> _Self:
+        '''
+            Plays the given video element. Does this by unpausing it regardless of if already playing.
+        '''
+        self.paused = False
+        return self
+
+    def pause(self) -> _Self:
+        '''
+            Pauses the given video element. Does this by pausing it regardless of if already paused.
+        '''
+        self.paused = True
+        return self
+
+    def set_frame_rate(self, frame_rate: int) -> _Self:
+        '''
+            Sets the given video data's frame rate to the new frame rate.
+        '''
+        self.video_data.frame_rate = frame_rate
+        return self
+
+    def update(self, dt: float, _=True):
+        super().update(dt, True)
+
+        if self.paused:
+            return
+
+        self._timer += dt
+
+        if self._timer > 1/self.video_data.frame_rate:
+            self._timer = 0
+            self.current_frame += 1
+            if self.current_frame > len(self.video_data.frames)-1:
+                self.current_frame = 0
+
+    def draw(self, target_surface: _pygame.Surface):
+        self.surface.fill(COLORS["TRANSPARENT"])
+        pos = (self.position[0], self.position[1]-self.get_menu_scroll())
+        _pygame.draw.rect(target_surface, self.stroke_color, self.get_stroke_rect(), border_radius=self.get_border_radius(), width=self.stroke_thickness)
+        _pygame.draw.rect(target_surface, self.background_color, (*pos, *self.size), border_radius=self.get_border_radius(0))
+
+        if self.video_data.frames:
+            frame = self.video_data.get_video_frame(self.current_frame)
+            self.surface.blit(frame if not self._scale_frames else _pygame.transform.scale(frame, self.size), (0, 0))
+
+        self.draw_elements(self.surface)
+
+        target_surface.blit(self.surface, pos)
 
 # ----------------------------
 # LAYOUTS
@@ -2370,7 +2466,7 @@ def draw_tree_view(tree_view: list[tuple[UIElement, int]], surface: _pygame.Surf
         draw_text(text, (text_offset[0]+entry[1]*25, y), COLORS["WHITE"], surface, font)
         y += 15
 
-print(f"SparseGUI v1.2.4 (Python {_sys.version[0:7]}, pygame {_pygame.ver})")
+print(f"SparseGUI v1.2.6 (Python {_sys.version[0:6]}, pygame {_pygame.ver})")
 
 # Defining what is imported if import * is used on this module
-__all__: list[str] = [name for name, obj in globals().items() if name[0] != "_" or name.startswith("_")]
+__all__: list[str] = [name for name, obj in globals().items() if not (name[0] == "_" or name.startswith("_"))]
