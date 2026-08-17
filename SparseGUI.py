@@ -5,8 +5,6 @@
     
     Retained-mode UILibrary written in python 3.13.3 pygame 2.6.1. Allows for well running and comprehensive UI in pygame in a parent child 
     hierarchy without needing to manually drawn to surfaces. Allows for easier GUI work and has a built set of diverse GUI elements.\n
-
-    (**NOTE**: UISystem was custom made before hand, not stolen)
 '''
 
 # ----------------------------
