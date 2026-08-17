@@ -51,7 +51,7 @@ def main():
     # Canvas object to place SparseGUI elements inside.
     # Add SparseGUI elements inside the list for them to appear inside the screen.
     # This will be the top level of the scene graph of the elements.
-    canvas = SparseGUI.Canvas(root, WINDOW_SIZE, [
+    canvas = SparseGUI.Canvas(WINDOW_SIZE, [
         SparseGUI.SubWindow((150, 150), title="My Example SparseGUI Window!", children=[
             SparseGUI.TextButton("Click me!", action=lambda: print("[EVENT LOG]: Click me clicked!"), background_color=(45, 45, 45)),
             SparseGUI.TextBox(placeholder_text="Type in here...", background_color=(20, 20, 20),
