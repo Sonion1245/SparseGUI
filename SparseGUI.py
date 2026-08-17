@@ -323,6 +323,9 @@ class Canvas:
         '''
             Handles the element events.
         '''
+        if not self.surface.get_rect(topleft=self.position).collidepoint(_pygame.mouse.get_pos()):
+            return
+        
         if isinstance(self.layer, list):
             for element in self.layer:
                 if element.hidden: continue
@@ -783,6 +786,8 @@ class UIElement:
                 continue
 
             element.handle_event(event)
+            if element.mouse_hovering:
+                break
 
     def get_local_mouse_position(self) -> Coordinate:
         '''
@@ -976,6 +981,7 @@ class DragComponent(UIComponent):
             Indicates wehter the component should start dragging. This is meant to be overriden and just returns True
         '''
         return True
+    
     def handle_event(self, event: _pygame_event_type):
         if event.type == _pygame.MOUSEBUTTONDOWN and event.button == 1 and self.element.mouse_hovering and not self.element.hidden:
             if self.should_start_drag(event.pos):
@@ -988,10 +994,16 @@ class DragComponent(UIComponent):
         
         if event.type == _pygame.MOUSEMOTION and self.dragging:
             mouse_pos = self.element.local_mouse_position
-            self.element.position = (
-                mouse_pos[0] - self.drag_offset[0] + self.offset[0],
-                mouse_pos[1] - self.drag_offset[1] + self.offset[1]
-            )
+            pos_x = max(self.element.stroke_thickness, mouse_pos[0] - self.drag_offset[0] + self.offset[0])
+            pos_y = max(self.element.stroke_thickness, mouse_pos[1] - self.drag_offset[1] + self.offset[1])
+
+            if pos_x + self.element.size[0] + self.element.stroke_thickness >= self.element.parent.size[0]:
+                pos_x = self.element.parent.size[0] - self.element.size[0] - self.element.stroke_thickness
+
+            if pos_y + self.element.size[1] + self.element.stroke_thickness > self.element.parent.size[1]:
+                pos_y = self.element.parent.size[1] - self.element.size[1] - self.element.stroke_thickness
+
+            self.element.position = (pos_x, pos_y)
 
         if event.type == _pygame.MOUSEBUTTONUP and event.button == 1 and self.dragging:
             self.dragging = False
@@ -2001,7 +2013,6 @@ class Menu(UIElement):
             if self.focused and self.scrollable and self.max_scroll > 0:
                 pos = self.local_mouse_position
                 self.scrollbar_dragging = self.current_scrollbar_rect.collidepoint(pos)
-                print(self.scrollbar_dragging)
                 self.scrollbar_offset = pos[1]-self.current_scrollbar_rect.y
 
         elif event.type == _pygame.MOUSEWHEEL and self.focused and self.scrollable and self.mouse_hovering:
@@ -2058,10 +2069,8 @@ class Menu(UIElement):
         
         if self.scrollable and self.max_scroll > 0:
             scrollbar_rect = self._get_scrollbar_rect(self.scroll_y, self.max_scroll, self.scrollbar_width)
-
             _pygame.draw.rect(self.surface, COLORS["GRAY"], scrollbar_rect)
-
-            self.current_scrollbar_rect = _pygame.Rect(scrollbar_rect)
+            self.current_scrollbar_rect = _pygame.Rect(*scrollbar_rect)
 
         self._base_draw(target_surface)
 
@@ -2223,6 +2232,8 @@ class SubWindow(Menu):
     def draw(self, target_surface: _pygame.Surface=None) -> None:
         if self.hidden: return
         if self.size[0] <= 0 or self.size[1] <= 0: return
+        self._minimize_button_position = (self.size[0] - self._close_button.get_width()-50, 5)
+        self._close_button_position = (self.size[0] - self._close_button.get_width()-20, 5)
         
         if self.layout is not None and len(self.children) > 0:
             self.layout.update()
@@ -2239,16 +2250,9 @@ class SubWindow(Menu):
         self.titlebar_surface.blit(self._cached_text_surface, (5, self.title_bar_height/2-self._cached_text_surface.get_height()/2))
 
         if self.scrollable and self.max_scroll > 0:
-            scrollbar_rect = self._get_scrollbar_rect(self.scroll_y, self.max_scroll, self.scrollbar_size)
+            scrollbar_rect = self._get_scrollbar_rect(self.scroll_y, self.max_scroll, self.scrollbar_width)
 
-            screen_position = self.screen_position
-            scrollbar_rect = _pygame.Rect(
-                screen_position[0] + self.size[0]-self.scrollbar_size[0],
-                screen_position[1]+scrollbar_rect[1]+self.title_bar_height,
-                *self.scrollbar_size
-            )
-
-            self.current_scrollbar_rect = scrollbar_rect
+            self.current_scrollbar_rect = _pygame.Rect(*scrollbar_rect)
 
             _pygame.draw.rect(self.sub_surface, COLORS["LIGHTER-GRAY"], scrollbar_rect)
 
