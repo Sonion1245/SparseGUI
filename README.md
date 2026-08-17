@@ -57,7 +57,7 @@ def main():
             SparseGUI.TextBox(placeholder_text="Type in here...", background_color=(20, 20, 20),
                               on_focus_lost=lambda enter, text: print("[EVENT LOG]: Textbox focus lost!")),
             SparseGUI.TextLabel("Text label!")
-        ]).add_component(SparseGUI.ResizeableComponent).apply_layout(SparseGUI.VerticalLayout, item_gap=10) # Auto sorts the elements in positioning.
+        ]).add_component(SparseGUI.ResizeableComponent)[0].apply_layout(SparseGUI.VerticalLayout, item_gap=10) # Auto sorts the elements in positioning.
     ])
 
     # Starting game loop.
