@@ -61,7 +61,7 @@ def main():
     ])
 
     # Starting game loop.
-    running, clock = True, pygame.Clock()
+    running, clock = True, pygame.time.Clock()
     while running:
         # Gettings events and time between frames.
         dt, events = clock.tick(WINDOW_FPS) / 1000, pygame.event.get()
@@ -81,7 +81,7 @@ def main():
         root.fill((45, 45, 45))
 
         # Updating the canvas for elements to appear. dt is passed so tweening and frame based animations work correctly.
-        canvas.update(dt)
+        canvas.update(dt, root)
 
         # Show current frame.
         pygame.display.flip()
