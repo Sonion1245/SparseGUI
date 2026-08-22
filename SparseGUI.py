@@ -32,7 +32,6 @@ Coordinate = tuple[int, int]; # Coordinate
 _global_font = None # The global font used by the library as a placeholder for fonts not given to elements.
 _command_key = _pygame.K_LCTRL
 
-@property
 def command_key():
     '''
         The key used for textbox's special case features, such as pasting or copying.
@@ -365,7 +364,6 @@ class Canvas:
 class UIElement:
     '''
         The base class of a UI element.\n
-        NOTE: Elements overlapping can take input at the same time, no fix is found yet.
     '''
     def __init__(self, 
                  parent: _Self | Canvas=None, size: Coordinate=(100, 50), position: Coordinate=(0, 0), 
@@ -708,7 +706,25 @@ class UIElement:
         '''
             Returns wether the mouse is over the element based off screen position.
         '''
-        return self.surface.get_rect(topleft=self.screen_position).collidepoint(_pygame.mouse.get_pos())
+        result = True
+        current = self.parent
+
+        while current and result:
+            items = (current.layer if isinstance(current, Canvas) else current.children)
+            for element in items:
+                if element is self:
+                    continue
+
+                if element.mouse_hovering and element.Z > self.Z:
+                    result = False
+                elif element.mouse_hovering and element.Z == self.Z and items.index(element) > items.index(self):
+                    # ^ This branch is used for when the elements share a Z layer, in this case 
+                    # comparing when the elements were added is needed for overlap detection.
+                    result = False
+
+            current = current.parent if hasattr(current, "parent") else None
+
+        return self.surface.get_rect(topleft=self.screen_position).collidepoint(_pygame.mouse.get_pos()) and result
 
     def hide(self) -> _Self:
         if self.mouse_hovering and self.mouse_over_parent():
@@ -862,6 +878,16 @@ class UIElement:
     def handle_event(self, event: _pygame_event_type) -> None:
         ''' Handles the element interactivity. This is a placeholder and just handles components until overriden '''
         self.handle_event_elements(event)
+
+    def _on_size(self, new_size: tuple[float, float]):
+        '''
+            Internal callback used for when the size is changed. Use on_size_changed for public use.
+        '''
+
+    def on_size_changed(self, new_size: tuple[float, float]):
+        '''
+            A callback for when the size is changed
+        '''
 
     def __str__(self):
         return f"{self.name}"
@@ -1367,8 +1393,7 @@ class ImageButton(ImageLabel):
 
 class TextBox(UIElement):
     '''
-        A text entry for text, setting multi_line will define wether it will support several lines or one line which will cause the 
-        object to change how text rendering and interaction works internally.
+        A text entry for text, setting multi_line will define wether it will support several lines or one line.
     '''
 
     def __init__(self, position=(0, 0), size=(250, 25), parent=None,
@@ -1383,7 +1408,7 @@ class TextBox(UIElement):
                           stroke_transparency=stroke_transparency, children=children, name=name,
                           stroke_thickness=2, border_radius=border_radius, stroke_color=stroke_color)
  
-        self.multi_line = multi_line
+        self._multi_line = multi_line
 
         self._lines: list[str] = ["Hello world!"]
         self.cursor_line = 0
@@ -1391,12 +1416,11 @@ class TextBox(UIElement):
  
         self.scroll_x = 0
         self.text_scroll = 0
-        self.line_gap = 15
         self.max_scroll = 300
         self.scrollbar_width = 6
+        self.line_gap = 15
  
-        self.font = font or (_pygame.font.SysFont("consolas", self.surface.get_height() - 5)
-                              if not multi_line else _global_font)
+        self.font = font or (_pygame.font.SysFont("consolas", self.line_gap))
         self.focused = False
         self.editable = True
         self.cursor_visible = True
@@ -1427,7 +1451,37 @@ class TextBox(UIElement):
         self.highlight_color = (166, 210, 255)
         self._mouse_selecting = False
         self.scale_multiline_size = True
- 
+
+    def _on_size(self, new_size):
+        if not self.multi_line:
+            self.font = _pygame.font.SysFont("consolas", self.line_gap)
+
+    @property
+    def multi_line(self):
+        return self._multi_line
+
+    @multi_line.setter
+    def multi_line(self, value: bool):
+        if not value:
+            self.cursor_line = 0
+
+            if len(self._lines) <= 1:
+                return
+            
+            result = ""
+            first = self._lines[0]
+
+            for i, line in enumerate(self._lines):
+                if i < 0:
+                    continue
+                result += line
+
+            self._lines.clear()
+            self._lines.append(first + result)
+
+        self._multi_line = value
+            
+
     @property
     def lines(self) -> list[str]:
         return self._lines
@@ -1438,7 +1492,6 @@ class TextBox(UIElement):
             self._lines = value.split("\n") if self.multi_line else [value]
         else:
             self._lines = value if value else [""]
-        self._invalidate_cache()
  
     @property
     def text(self) -> str:
@@ -1450,12 +1503,17 @@ class TextBox(UIElement):
  
     @property
     def current_line(self) -> str:
-        return self.lines[self.cursor_line]
+
+        try:
+            result = self.lines[self.cursor_line]
+        except IndexError:
+            result = ""
+        
+        return result
  
     @current_line.setter
     def current_line(self, value: str):
         self.lines[self.cursor_line] = value
-        self._invalidate_cache()
 
     @property
     def _text_offset(self):
@@ -1466,9 +1524,6 @@ class TextBox(UIElement):
  
     def after_cursor(self) -> str:
         return self.current_line[self.cursor_colum:]
- 
-    def _invalidate_cache(self):
-        pass
  
     def add_char(self, char: str) -> _Self:
         if self.has_selection:
@@ -1488,9 +1543,12 @@ class TextBox(UIElement):
     def remove_char(self) -> _Self:
         if self.has_selection:
             self.erase_selection()
+
             if not self.multi_line:
                 self.check_bounds()
+            
             return self
+        
         if self.cursor_colum > 0:
             self._register_undo("backspace")
             self.current_line = self.current_line[:self.cursor_colum - 1] + self.after_cursor()
@@ -1503,7 +1561,7 @@ class TextBox(UIElement):
             self.cursor_colum = len(self.current_line)
             self.current_line = self.current_line + remainder
 
-            if self.cursor_line * self.line_gap < self.size[1] - self.text_offset_input:
+            if self.cursor_line * self.line_gap < self.size[1] - self.text_offset_input and self.scale_multiline_size:
                 self.size = (self.size[0], self.size[1] - self.line_gap)
 
         return self
@@ -1579,27 +1637,43 @@ class TextBox(UIElement):
     def get_selected_text(self) -> str:
         if not self.has_selection:
             return ""
+        
         (sl, sc), (el, ec) = self.get_selection_range()
+
         if sl == el:
             return self.lines[sl][sc:ec]
+        
         parts = [self.lines[sl][sc:]]
+
         parts.extend(self.lines[sl + 1:el])
         parts.append(self.lines[el][:ec])
+
         return "\n".join(parts)
  
     def erase_selection(self) -> _Self:
         if not self.has_selection:
             return self
+
         self._register_undo("selection_delete")
+
         (sl, sc), (el, ec) = self.get_selection_range()
+
         if sl == el:
             self.current_line = self.lines[sl][:sc] + self.lines[sl][ec:]
         else:
             merged = self.lines[sl][:sc] + self.lines[el][ec:]
             new_lines = self.lines[:sl] + [merged] + self.lines[el + 1:]
             self.lines = new_lines
+        
         self.cursor_line, self.cursor_colum = sl, sc
         self.clear_selection()
+
+        if self.multi_line:
+            if self.scale_multiline_size:
+                self.size = (self.size[0], len(self.lines) * self.line_gap)
+        else:
+            self.check_bounds()
+
         return self
  
     def clear_selection(self):
@@ -1625,12 +1699,21 @@ class TextBox(UIElement):
         
         self.clear_selection()
 
+    def reset_cursor_position(self):
+        if not self.multi_line:
+            self.cursor_colum = 0
+            self.scroll_x = 0
+        else:
+            self.cursor_colum = 0
+            self.cursor_line = 0
+            self.text_scroll = 0
+
     def handle_event(self, event) -> None:
         self.handle_event_elements(event)
  
         if event.type == _pygame.MOUSEBUTTONDOWN and event.button == 1 and not self.hidden:
             result = (self.mouse_hovering and self.editable) if not callable(self.on_selected) \
-                else self.on_selected(self, event, self.local_mouse_position)
+                else self.on_selected(self, event, self.local_mouse_position) and self.mouse_hovering
  
             if not result and self.focused:
                 self.exit_box(False)
@@ -1638,6 +1721,10 @@ class TextBox(UIElement):
                 self.select_text_box()
                 if self.clear_text_on_focus:
                     self.text = ""
+                    if not self.multi_line:
+                        self.scroll_x = 0
+                    else:
+                        self.text_scroll = 0
  
             self.focused = result
             if self.focused:
@@ -1657,9 +1744,6 @@ class TextBox(UIElement):
             self.cursor_visible = True
             self.now = _time.time()
  
-        if self.multi_line and event.type == _pygame.MOUSEWHEEL and self.focused and self.mouse_hovering:
-            self.text_scroll = max(0, self.text_scroll + event.y * -5)
- 
         if event.type == _pygame.KEYDOWN and self.focused and self.editable:
             self.cursor_visible = True
             self.now = _time.time()
@@ -1677,6 +1761,10 @@ class TextBox(UIElement):
             elif event.key == _pygame.K_LEFT:
                 self.clear_selection()
                 self.move_left()
+            elif event.key == _pygame.K_HOME:
+                self.reset_cursor_position()
+            elif event.key == _pygame.K_ESCAPE:
+                self.exit_box(False)
             elif event.key == _pygame.K_RIGHT:
                 self.clear_selection()
                 self.move_right()
@@ -1686,29 +1774,32 @@ class TextBox(UIElement):
             elif event.key == _pygame.K_DOWN:
                 self.clear_selection()
                 self.move_down()
-            elif event.key == _pygame.K_a and _held_keys[_pygame.K_LCTRL]:
+            elif event.key == _pygame.K_TAB:
+                self.add_char("    ")
+                self._start_quick_add(_pygame.K_TAB)
+            elif event.key == _pygame.K_a and _held_keys[command_key()]:
                 self.select_all()
-            elif event.key == _pygame.K_c and _held_keys[_pygame.K_LCTRL]:
+            elif event.key == _pygame.K_c and _held_keys[command_key()]:
                 self.copy_selection()
-            elif event.key == _pygame.K_x and _held_keys[_pygame.K_LCTRL]:
+            elif event.key == _pygame.K_x and _held_keys[command_key()]:
                 self.copy_selection()
                 self.erase_selection()
-            elif event.key == _pygame.K_v and _held_keys[_pygame.K_LCTRL]:
+            elif event.key == _pygame.K_v and _held_keys[command_key()]:
                 if self.has_selection:
                     self.erase_selection()
                 
                 self.paste_into(get_clipboard_text())
-                self._start_quick_add(_pygame.K_v + _pygame.K_LCTRL)
-            elif event.key == _pygame.K_z and _pygame.key.get_pressed()[_pygame.K_LCTRL]:
+                self._start_quick_add(_pygame.K_v + command_key())
+            elif event.key == _pygame.K_z and _pygame.key.get_pressed()[command_key()]:
                 self.undo_stack.undo()
-                self._start_quick_add(_pygame.K_z + _pygame.K_LCTRL)
+                self._start_quick_add(_pygame.K_z + command_key())
             else:
                 if len(event.unicode) > 0 and event.unicode.isprintable():
                     self.add_char(event.unicode)
                     self._start_quick_add(event.unicode)
  
         if event.type == _pygame.KEYUP and self.focused and self.editable:
-            if event.unicode == self._held_key_code or event.key == self._held_key_code or _pygame.K_LCTRL | self._held_key_code:
+            if event.unicode == self._held_key_code or event.key == self._held_key_code or (command_key() | self._held_key_code if isinstance(self._held_key_code, int) else False):
                 self.held_key = False
 
     def _start_quick_add(self, char):
@@ -1723,10 +1814,12 @@ class TextBox(UIElement):
                 self.remove_char()
             elif self._held_key_code == _pygame.K_RETURN:
                 self.handle_return()
-            elif self._held_key_code == _pygame.K_z + _pygame.K_LCTRL:
+            elif self._held_key_code == _pygame.K_z + command_key():
                 self.undo_stack.undo()
-            elif self._held_key_code == _pygame.K_v + _pygame.K_LCTRL:
+            elif self._held_key_code == _pygame.K_v + command_key():
                 self.paste_into(get_clipboard_text())
+            elif self._held_key_code == _pygame.K_TAB:
+                self.add_char("    ")
             else:
                 self.add_char(self._held_key_code)
 
@@ -1752,6 +1845,8 @@ class TextBox(UIElement):
  
     def exit_box(self, was_enter: bool):
         self.on_focus_lost(was_enter, self.text)
+        self.clear_selection()
+        self.focused = False
         return self
  
     def check_bounds(self):
@@ -1771,19 +1866,23 @@ class TextBox(UIElement):
     def get_pixel_x(self):
         return self.font.size(self.before_cursor())[0]
  
-    def set_cursor_position(self, mouse_pos):
+    def set_cursor_position(self, position: tuple[float, float]):
+        position = self.transform_point_to_local_space(position)
         if self.multi_line:
-            local = (mouse_pos[0] - self.position[0] + self._text_offset, mouse_pos[1] - self.position[1])
-            self.cursor_line = min(len(self.lines) - 1, max(0, (local[1] + self.text_scroll) // self.line_gap))
+            local = (position[0] - self.position[0] + self._text_offset, position[1] - self.position[1])
+            
+            self.cursor_line = min(len(self.lines) - 1, max(0, round(local[1] / self.line_gap) ))
+
             for x in range(len(self.current_line) + 1):
                 if self.font.size(self.current_line[:x])[0] > local[0]:
                     self.cursor_colum = x
                     return self
+            
             self.cursor_colum = len(self.current_line)
         else:
             self.cursor_line = 0
             for i in range(len(self.current_line) + 1):
-                if self.font.size(self.current_line[:i])[0] > self.local_mouse_position[0] - self.position[0] + self.scroll_x + self._text_offset:
+                if self.font.size(self.current_line[:i])[0] > position[0] - self.position[0] + self.scroll_x + self._text_offset:
                     self.cursor_colum = i
                     return self
             self.cursor_colum = len(self.current_line)
@@ -1808,7 +1907,7 @@ class TextBox(UIElement):
                                (x_pos - self.scroll_x + self._text_offset, 2),
                                (x_pos - self.scroll_x + self._text_offset, 
                                 self.surface.get_height() - self.surface.get_height() / 8), 2)
- 
+
     def _draw_multi_line(self):
         self.max_scroll = self.surface.get_height() - 1
         first = max(0, int(self.text_scroll // self.line_gap))
@@ -1819,11 +1918,14 @@ class TextBox(UIElement):
             (sl, sc), (el, ec) = self.get_selection_range()
             for i in range(max(first, sl), min(last, el + 1)):
                 line = self.lines[i]
+
                 start_col = sc if i == sl else 0
                 end_col = ec if i == el else len(line)
+
                 x0 = self.font.size(line[:start_col])[0]
                 x1 = self.font.size(line[:end_col])[0] if line else x0 + 6
                 y = i * self.line_gap - self.text_scroll
+
                 _pygame.draw.rect(self.surface, self.highlight_color,
                                    (x0, y, max(2, x1 - x0), self.line_gap))
  
@@ -2063,7 +2165,7 @@ class Menu(UIElement):
         
         if self.scrollable and self.max_scroll > 0:
             scrollbar_rect = self._get_scrollbar_rect(self.scroll_y, self.max_scroll, self.scrollbar_width)
-            _pygame.draw.rect(self.surface, COLORS["GRAY"], scrollbar_rect)
+            _pygame.draw.rect(self.surface, COLORS["WHITE"], scrollbar_rect, border_radius=15)
             self.current_scrollbar_rect = _pygame.Rect(*scrollbar_rect)
 
         self._base_draw(target_surface)
