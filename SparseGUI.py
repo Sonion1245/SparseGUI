@@ -30,6 +30,14 @@ _pygame_event_type = _pygame.event.Event
 Coordinate = tuple[int, int]; # Coordinate
 
 _global_font = None # The global font used by the library as a placeholder for fonts not given to elements.
+_command_key = _pygame.K_LCTRL
+
+@property
+def command_key():
+    '''
+        The key used for textbox's special case features, such as pasting or copying.
+    '''
+    return _command_key
 
 def init(global_font_name="consolas", global_font_size=15) -> bool:
     global _global_font
@@ -43,22 +51,19 @@ def init(global_font_name="consolas", global_font_size=15) -> bool:
 
 # Decodes null bytes inside clipboard text and returns the final product.
 def get_clipboard_text() -> str:
-    copied_text = _pygame.scrap.get(_pygame.SCRAP_TEXT)
+    copied_text = _pygame.scrap.get_text()
     if not copied_text:
         return ""
 
-    try:
-        text = copied_text.decode("utf-8", errors="ignore")
-    except: # tbh dont know what could go wrong here.
-        text = copied_text.decode(errors="ignore")
+    return copied_text
 
-    text = text.replace("\x00", "")
-
-    return text
+# Sets the clipboard text to the given text
+def set_clipboard_text(text: str) -> None:
+    _pygame.scrap.put_text(text)
 
 # Changes the cursor hand based off a toggle for the arrow and hand.
 def set_cursor_hand(enabled: bool) -> None:
-    _pygame.mouse.set_system_cursor(_pygame.SYSTEM_CURSOR_HAND if enabled else _pygame.SYSTEM_CURSOR_ARROW)
+    _pygame.mouse.set_cursor(_pygame.SYSTEM_CURSOR_HAND if enabled else _pygame.SYSTEM_CURSOR_ARROW)
 
 # Holds colors via str to tuple pairs
 COLORS = {
@@ -1359,541 +1364,532 @@ class ImageButton(ImageLabel):
 
     def handle_event(self, event: _pygame_event_type) -> None:
         self.handle_event_elements(event)
-      
+
 class TextBox(UIElement):
-    ''' 
-        A Textbox entry. This should be used for user input string name.
     '''
-    def __init__(self, position: Coordinate=(0, 0), size: Coordinate=(250, 25), parent: UIElement=None, no_active_elements: bool=False, 
-                 children: list[UIElement]=None, name: str="TextBox", border_radius: int=0, background_color: tuple[int, int, int]=COLORS["DARKER-GRAY"], background_transparency: float=1,
-                 focused_color: tuple[int, int, int]=COLORS["GRAY"], stroke_color: tuple[int, int, int]=COLORS["BLACK"], stroke_transparency: float=1, 
-                 placeholder_color: tuple[int, int, int]=COLORS["LIGHTER-GRAY"], placeholder_text: str="...", clear_text_on_focus: bool=True,
-                 on_selected: _Callable[[_Self, _pygame_event_type, Coordinate], bool]=None, on_focus_lost: _Callable[[bool, str], None]=None):
-        super().__init__(parent, size, position, background_color, background_transparency, stroke_transparency=stroke_transparency, children=children, name=name, stroke_thickness=2, border_radius=border_radius, stroke_color=stroke_color)
-        self._text = "Hello world!"
+        A text entry for text, setting multi_line will define wether it will support several lines or one line which will cause the 
+        object to change how text rendering and interaction works internally.
+    '''
+
+    def __init__(self, position=(0, 0), size=(250, 25), parent=None,
+                 multi_line: bool = False,
+                 children=None, name="TextBox", border_radius=0,
+                 background_color=COLORS["DARKER-GRAY"], background_transparency=1,
+                 focused_color=COLORS["GRAY"], stroke_color=COLORS["BLACK"], stroke_transparency=1,
+                 placeholder_color=COLORS["LIGHTER-GRAY"], placeholder_text="...",
+                 clear_text_on_focus=True, font=None,
+                 on_selected=None, on_focus_lost=None):
+        super().__init__(parent, size, position, background_color, background_transparency,
+                          stroke_transparency=stroke_transparency, children=children, name=name,
+                          stroke_thickness=2, border_radius=border_radius, stroke_color=stroke_color)
+ 
+        self.multi_line = multi_line
+
+        self._lines: list[str] = ["Hello world!"]
+        self.cursor_line = 0
+        self.cursor_colum = 0
+ 
+        self.scroll_x = 0
+        self.text_scroll = 0
+        self.line_gap = 15
+        self.max_scroll = 300
+        self.scrollbar_width = 6
+ 
+        self.font = font or (_pygame.font.SysFont("consolas", self.surface.get_height() - 5)
+                              if not multi_line else _global_font)
+        self.focused = False
+        self.editable = True
+        self.cursor_visible = True
+        self.cursor_enabled = True
+        self.now = _time.time()
+        self.text_offset_input = 10
+ 
+        self.clear_text_on_focus = clear_text_on_focus
         self.placeholder_color = placeholder_color
         self.placeholder_text = placeholder_text
         self.focused_color = focused_color
-        self.focused = False
-        self.scroll_x = 0
-        self.cursor_visible = True
-        self.now = _time.time()
-        self.cursor_position = len(self.text)
-        self.font = _pygame.font.SysFont("consolas", self.surface.get_height()-5)
-        self.text_offset_input = 4
-        self.clear_text_on_focus = clear_text_on_focus
-        self.undo_stack = _Stack([])
-        self.on_selected = on_selected
-        self.editable = True
+ 
         self.held_key = False
         self._held_key_tick = _time.time()
         self._held_key_code = ""
-        
-        def undo(context: str, value: _Any):
-            if value["type"] == "backspace" or value["type"] == "delete" or value["type"] == "char_add":
-                self.text = value["ori"]
-                self.cursor_position = value["pos"]
-        
-        color = COLORS["WHITE"] if len(self.text) > 0 else self.placeholder_color
-        self.undo_stack.on_undo = undo
-        self.cached_text_surface = self.font.render(self.text if len(self.text) > 0 else self.placeholder_text, True, color)
-
+        self._now_held_tick = _time.time()
+ 
+        self._line_cache = {}
+        self._MAX_CACHE = 4000
+ 
+        self.undo_stack = _Stack([])
+        self.undo_stack.on_undo = self._on_undo
+        self.on_selected = on_selected
         if on_focus_lost:
             self.on_focus_lost = on_focus_lost
-
-    def on_mouse_hover(self, entering, mouse_enter_pos):
-        if self.hidden:
-            return
-        if not self.editable:
-            return
-        _pygame.mouse.set_system_cursor(_pygame.SYSTEM_CURSOR_IBEAM if entering else _pygame.SYSTEM_CURSOR_ARROW)
-
-    def on_focus_lost(self, was_enter: bool, text: str):
-        '''
-            This is a callback for when focus was losted. This is meant to be overriden and does nothing.
-        '''
-
-    def on_focus(self):
-        '''
-            This is a callback for when the textbox is focused. This is meant to be overriden and does nothing.
-        '''
-
-    def select_text_box(self) -> _Self:
-        self.on_focus()
-        self.focused = True
-        return self
-
+ 
+        self.selection_anchor = (-1, -1)
+        self.highlight_color = (166, 210, 255)
+        self._mouse_selecting = False
+        self.scale_multiline_size = True
+ 
     @property
-    def text(self):
-        return self._text
-    
+    def lines(self) -> list[str]:
+        return self._lines
+ 
+    @lines.setter
+    def lines(self, value):
+        if isinstance(value, str):
+            self._lines = value.split("\n") if self.multi_line else [value]
+        else:
+            self._lines = value if value else [""]
+        self._invalidate_cache()
+ 
+    @property
+    def text(self) -> str:
+        return "\n".join(self._lines)
+ 
     @text.setter
     def text(self, value: str):
-        if value == self.text:
-            return
-        
-        self._text = value
+        self.lines = value
+ 
+    @property
+    def current_line(self) -> str:
+        return self.lines[self.cursor_line]
+ 
+    @current_line.setter
+    def current_line(self, value: str):
+        self.lines[self.cursor_line] = value
+        self._invalidate_cache()
 
-        color = COLORS["WHITE"] if len(self.text) > 0 else self.placeholder_color
+    @property
+    def _text_offset(self):
+        return (self.border_radius-5 if len(self.text) <= 0 else 0)
+ 
+    def before_cursor(self) -> str:
+        return self.current_line[:self.cursor_colum]
+ 
+    def after_cursor(self) -> str:
+        return self.current_line[self.cursor_colum:]
+ 
+    def _invalidate_cache(self):
+        pass
+ 
+    def add_char(self, char: str) -> _Self:
+        if self.has_selection:
+            self.erase_selection()
+        self._register_undo("char_add")
+        self.current_line = self.before_cursor() + char + self.after_cursor()
+        self.cursor_colum += 1
+        self.cursor_visible = True
+        self.now = _time.time()
 
-        self.cached_text_surface = self.font.render(self.text if len(self.text) > 0 else self.placeholder_text, True, color)
+        if self.multi_line:
+            if self._get_surf_line(self.current_line).get_width() > self.size[0] - self.text_offset_input:
+                self.add_line()
 
-    def set_cursor_position(self, mouse_pos: Coordinate) -> _Self:
-        self.cursor_position = 0
-
-        for i in range(len(self.text) + 1):
-            before_text_width = self.font.size(self.text[:i])[0]
-            if before_text_width > self.local_mouse_position[0] - self.position[0] + self.scroll_x:
-                self.cursor_position = max(0, i)
-                break
-            else:
-                self.cursor_position = i
-        
         return self
-
-    def check_bounds(self) -> _Self:
-        x_pos = self.get_pixel_x()
-        if x_pos + self.scroll_x < self.surface.get_width():
-            self.scroll_x = 0
-
-        if x_pos >= self.surface.get_width() - self.text_offset_input:
-            self.scroll_x = x_pos - self.surface.get_width() + self.text_offset_input
-        if x_pos - self.scroll_x < 0:
-            self.scroll_x -= x_pos - self.text_offset_input
-        
-        return self
-            
-    def exit_box(self, was_enter: bool) -> _Self:
-        self.on_focus_lost(was_enter, self.text)
-        return self
-    
-    def register_undo(self, data: dict[str, _Any]) -> _Self:
-        self.undo_stack.insert(data)
-        return self
-
+ 
     def remove_char(self) -> _Self:
-        if self.cursor_position > 0:
-            self.register_undo({
-                "ori": self.text,
-                "pos": self.cursor_position,
-                "type": "backspace"
-            })
-                    
-            self.scroll_x -= self.text_offset_input if self.scroll_x > 0 else 0
+        if self.has_selection:
+            self.erase_selection()
+            if not self.multi_line:
+                self.check_bounds()
+            return self
+        if self.cursor_colum > 0:
+            self._register_undo("backspace")
+            self.current_line = self.current_line[:self.cursor_colum - 1] + self.after_cursor()
+            self.cursor_colum -= 1
+        elif self.multi_line and self.cursor_line > 0:
+            self._register_undo("backspace")
+            remainder = self.after_cursor()
+            self.lines.pop(self.cursor_line)
+            self.cursor_line -= 1
+            self.cursor_colum = len(self.current_line)
+            self.current_line = self.current_line + remainder
 
-            self.text = self.text[:self.cursor_position-1] + self.text[self.cursor_position:]
-            self.cursor_position -= 1
-            self.check_bounds()
+            if self.cursor_line * self.line_gap < self.size[1] - self.text_offset_input:
+                self.size = (self.size[0], self.size[1] - self.line_gap)
+
+        return self
+ 
+    def add_line(self) -> _Self:
+        if not self.multi_line:
+            return self
+        after, before = self.after_cursor(), self.before_cursor()
+        self.current_line = after
+        self.lines.insert(self.cursor_line, before)
+        self.cursor_line += 1
+        self.cursor_colum = 0
+
+        if self.cursor_line * self.line_gap >= self.size[1] - self.text_offset_input and self.scale_multiline_size:
+            self.size = (self.size[0], self.size[1] + self.line_gap)
+
+        self.clear_selection()
         
         return self
+ 
+    def _register_undo(self, kind: str):
+        self.undo_stack.insert({
+            "line": self.cursor_line, "col": self.cursor_colum,
+            "text": self.current_line, "type": kind,
+        })
+ 
+    def _on_undo(self, context, value):
+        self.cursor_line = value["line"]
+        self.cursor_colum = value["col"]
+        self.current_line = value["text"]
+ 
+    def move_left(self):
+        if self.cursor_colum > 0:
+            self.cursor_colum -= 1
+        elif self.multi_line and self.cursor_line > 0:
+            self.cursor_line -= 1
+            self.cursor_colum = len(self.current_line)
+ 
+    def move_right(self):
+        if self.cursor_colum < len(self.current_line):
+            self.cursor_colum += 1
+        elif self.multi_line and self.cursor_line < len(self.lines) - 1:
+            self.cursor_line += 1
+            self.cursor_colum = 0
+ 
+    def move_up(self):
+        if self.multi_line and self.cursor_line > 0:
+            self.cursor_line -= 1
+            self.cursor_colum = min(self.cursor_colum, len(self.current_line))
+ 
+    def move_down(self):
+        if self.multi_line and self.cursor_line < len(self.lines) - 1:
+            self.cursor_line += 1
+            self.cursor_colum = min(self.cursor_colum, len(self.current_line))
+ 
+    def handle_return(self):
+        if self.multi_line:
+            self.add_line()
+        else:
+            self.focused = False
+            self.exit_box(True)
 
-    def start_quick_add(self, char: str | int) -> _Self:
-        self.held_key = True
-        self._held_key_code = char
-        self._held_key_tick = _time.time()
-
+    @property
+    def has_selection(self) -> bool:
+        return self.selection_anchor is not None and self.selection_anchor != (self.cursor_line, self.cursor_colum)
+ 
+    def get_selection_range(self):
+        '''Returns ((start_line, start_col), (end_line, end_col)), normalized so start <= end.'''
+        a = self.selection_anchor
+        b = (self.cursor_line, self.cursor_colum)
+        return (a, b) if a <= b else (b, a)
+ 
+    def get_selected_text(self) -> str:
+        if not self.has_selection:
+            return ""
+        (sl, sc), (el, ec) = self.get_selection_range()
+        if sl == el:
+            return self.lines[sl][sc:ec]
+        parts = [self.lines[sl][sc:]]
+        parts.extend(self.lines[sl + 1:el])
+        parts.append(self.lines[el][:ec])
+        return "\n".join(parts)
+ 
+    def erase_selection(self) -> _Self:
+        if not self.has_selection:
+            return self
+        self._register_undo("selection_delete")
+        (sl, sc), (el, ec) = self.get_selection_range()
+        if sl == el:
+            self.current_line = self.lines[sl][:sc] + self.lines[sl][ec:]
+        else:
+            merged = self.lines[sl][:sc] + self.lines[el][ec:]
+            new_lines = self.lines[:sl] + [merged] + self.lines[el + 1:]
+            self.lines = new_lines
+        self.cursor_line, self.cursor_colum = sl, sc
+        self.clear_selection()
         return self
+ 
+    def clear_selection(self):
+        self.selection_anchor = None
+ 
+    def select_all(self):
+        self.selection_anchor = (0, 0)
+        self.cursor_line = len(self.lines) - 1
+        self.cursor_colum = len(self.current_line)
+ 
+    def copy_selection(self):
+        if self.has_selection:
+            set_clipboard_text(self.get_selected_text())
 
-    def handle_event(self, event: _pygame_event_type) -> None:
+    def paste_into(self, text: str):
+        if self.multi_line:
+            for line in text.split("\n"):
+                self.add_char(line)
+                self.cursor_colum += len(line)
+        else:
+            self.cursor_colum += len(text)
+            self.add_char(text)
+        
+        self.clear_selection()
+
+    def handle_event(self, event) -> None:
         self.handle_event_elements(event)
-        
+ 
         if event.type == _pygame.MOUSEBUTTONDOWN and event.button == 1 and not self.hidden:
-            if not callable(self.on_selected):
-                result = self.mouse_hovering and self.editable
-            else:
-                result = self.on_selected(self, event, self.local_mouse_position)
-
+            result = (self.mouse_hovering and self.editable) if not callable(self.on_selected) \
+                else self.on_selected(self, event, self.local_mouse_position)
+ 
             if not result and self.focused:
                 self.exit_box(False)
             elif result:
                 self.select_text_box()
-                if self.clear_text_on_focus: self.text = ""
-
+                if self.clear_text_on_focus:
+                    self.text = ""
+ 
             self.focused = result
             if self.focused:
                 self.now = _time.time()
                 self.cursor_visible = True
                 self.set_cursor_position(event.pos)
-                if (self.get_pixel_x() - self.scroll_x <= 0 and self.scroll_x > 0) or (self.get_pixel_x() - self.scroll_x >= self.size[0] and self.cursor_position < len(self.text)):
-                    self.check_bounds()
-        
+                self.selection_anchor = (self.cursor_line, self.cursor_colum)
+                self._mouse_selecting = True
+            else:
+                self.clear_selection()
+ 
+        if event.type == _pygame.MOUSEBUTTONUP and event.button == 1:
+            self._mouse_selecting = False
+ 
+        if event.type == _pygame.MOUSEMOTION and self.focused and self._mouse_selecting and self.editable:
+            self.set_cursor_position(event.pos)
+            self.cursor_visible = True
+            self.now = _time.time()
+ 
+        if self.multi_line and event.type == _pygame.MOUSEWHEEL and self.focused and self.mouse_hovering:
+            self.text_scroll = max(0, self.text_scroll + event.y * -5)
+ 
         if event.type == _pygame.KEYDOWN and self.focused and self.editable:
-            if hasattr(self, "on_press"):
-                self.on_press(self)
-            
+            self.cursor_visible = True
+            self.now = _time.time()
+            _held_keys = _pygame.key.get_pressed()
+
+            if not self.multi_line:
+                self.check_bounds()
+ 
             if event.key == _pygame.K_BACKSPACE:
                 self.remove_char()
-                self.start_quick_add(_pygame.K_BACKSPACE)
-            
-            elif event.key == _pygame.K_DELETE:
-                if self.cursor_position < len(self.text):
-                    self.register_undo({
-                        "ori": self.text,
-                        "pos": self.cursor_position,
-                        "type": "delete"
-                    })
-                    self.text = self.text[:self.cursor_position] + self.text[self.cursor_position+1:]
-                    self.check_bounds()
-            elif event.key == _pygame.K_v and _pygame.key.get_pressed()[_pygame.K_LCTRL] and _pygame.scrap.get_init():
-                self.register_undo({
-                    "ori": self.text,
-                    "pos": self.cursor_position,
-                    "type": "char_add"
-                })
-                copied = get_clipboard_text()
-                self.text = self.text[:self.cursor_position] + copied + self.text[self.cursor_position:]
-                self.cursor_position += len(copied)
-                self.check_bounds()
+                self._start_quick_add(_pygame.K_BACKSPACE)
             elif event.key == _pygame.K_RETURN:
-                self.focused = False
-                self.exit_box(True)
+                self.handle_return()
+                self._start_quick_add(_pygame.K_RETURN)
             elif event.key == _pygame.K_LEFT:
-                self.cursor_position -= 1 if self.cursor_position > 0 else 0
-                if self.get_pixel_x() - self.scroll_x <= 0 and self.scroll_x > 0:
-                    self.scroll_x -= self.font.size(self.text[self.cursor_position])[0]
+                self.clear_selection()
+                self.move_left()
             elif event.key == _pygame.K_RIGHT:
-                self.cursor_position += 1 if self.cursor_position < len(self.text) else 0
-                if self.get_pixel_x() - self.scroll_x >= self.size[0] and self.cursor_position < len(self.text):
-                    self.scroll_x += self.font.size(self.text[self.cursor_position])[0] + self.text_offset_input
+                self.clear_selection()
+                self.move_right()
+            elif event.key == _pygame.K_UP:
+                self.clear_selection()
+                self.move_up()
+            elif event.key == _pygame.K_DOWN:
+                self.clear_selection()
+                self.move_down()
+            elif event.key == _pygame.K_a and _held_keys[_pygame.K_LCTRL]:
+                self.select_all()
+            elif event.key == _pygame.K_c and _held_keys[_pygame.K_LCTRL]:
+                self.copy_selection()
+            elif event.key == _pygame.K_x and _held_keys[_pygame.K_LCTRL]:
+                self.copy_selection()
+                self.erase_selection()
+            elif event.key == _pygame.K_v and _held_keys[_pygame.K_LCTRL]:
+                if self.has_selection:
+                    self.erase_selection()
+                
+                self.paste_into(get_clipboard_text())
+                self._start_quick_add(_pygame.K_v + _pygame.K_LCTRL)
             elif event.key == _pygame.K_z and _pygame.key.get_pressed()[_pygame.K_LCTRL]:
                 self.undo_stack.undo()
-                self.check_bounds()
-            else: 
+                self._start_quick_add(_pygame.K_z + _pygame.K_LCTRL)
+            else:
                 if len(event.unicode) > 0 and event.unicode.isprintable():
                     self.add_char(event.unicode)
-                    self.start_quick_add(event.unicode)
-        
+                    self._start_quick_add(event.unicode)
+ 
         if event.type == _pygame.KEYUP and self.focused and self.editable:
-            if event.unicode == self._held_key_code:
-                self.held_key = False
-    
-    def add_char(self, char: str) -> _Self:
-        self.register_undo({
-            "ori": self.text,
-            "pos": self.cursor_position,
-            "type": "char_add"
-        })
-        self.cursor_visible = True
-        self.now = _time.time()
-        self.text = self.text[:self.cursor_position] + char + self.text[self.cursor_position:]
-        self.cursor_position += 1
-        self.check_bounds()
-
-        return self
-
-    def get_pixel_x(self) -> int:
-        return self.font.size(self.text[:self.cursor_position])[0]
-
-    def draw(self, target_surface: _pygame.Surface=None) -> None:
-        if self.hidden:
-            if self.focused: self.exit_box()
-            return
-        if self.size[0] <= 0 or self.size[1] <= 0: return
-
-        self.surface.fill(COLORS["TRANSPARENT"])
-        self.surface.blit(self.cached_text_surface, (-self.scroll_x, self.surface.get_height()/2-self.cached_text_surface.get_height()/2))
-
-        if self.focused and self.held_key:
-            if _time.time() - self._held_key_tick > 0.65:
-                if self._held_key_code == _pygame.K_BACKSPACE:
-                    self.remove_char()
-                else:
-                    self.add_char(self._held_key_code)
-
-        if self.focused and self.cursor_visible:
-            x_pos = self.get_pixel_x()
-
-            _pygame.draw.line(self.surface, COLORS["WHITE"], 
-                            (x_pos-self.scroll_x, self.surface.get_height()/6), 
-                            (x_pos-self.scroll_x, self.surface.get_height()-self.surface.get_height()/4), 2
-                            )
-                
-        if _time.time() - self.now > 0.5 and self.focused:
-            self.now = _time.time()
-            self.cursor_visible = not self.cursor_visible
-        elif not self.focused:
-            if not self.cursor_visible:
-                self.cursor_visible = True
-
-        self.draw_elements(self.surface)
-        
-        self._base_draw(target_surface, (*(self.focused_color if self.focused else self.background_color), self.background_transparency*255))
-
-class MultiLineTextBox(UIElement):
-    '''
-        A multi line supported text entry. This should be used in multi line user text entry.
-    '''
-    def __init__(self, parent: UIElement=None, size: Coordinate=(200, 100), position: Coordinate=(0, 0), 
-        background_color: tuple[int, int, int]=None, background_transparency: float=1, stroke_thickness: int=4, stroke_color: tuple[int, int, int]=COLORS["BLACK"], stroke_transparency: float=1,
-        children: list[UIElement]=None, name: str="UIElement", text: list[str]=None, border_radius: int=0,
-    ):
-        super().__init__(parent=parent, size=size, position=position, background_color=background_color, stroke_thickness=stroke_thickness, stroke_color=stroke_color, 
-                        children=children, name=name, border_radius=border_radius, stroke_transparency=stroke_transparency, background_transparency=background_transparency)
-        self._lines = text or ["Hello world!"]
-        self.undo_stack = _Stack([])
-        self.cursor_colum = 0
-        self.cursor_line = 0
-        self.font = _global_font
-        self.text_scroll = 0
-        self.focused = False
-        self.cursor_visible = True
-        self.cursor_enabled = True
-        self.editable = True
-        self.line_gap = 15
-        self.cur_time = _time.time()
-        self.max_scroll = 300
-        self.scrollbar_width = 6
-
-        self.held_key = False
-        self._held_key_tick = _time.time()
-        self._line_cache = {}
-        self._MAX_CACHE = 4000
-
-        def undo(context: str, value: _Any):
-            self.cursor_line = value[0]
-            self.current_line = value[2]
-            self.cursor_colum = value[1]
-        
-        self.undo_stack.on_undo = undo
-    
-    def on_mouse_hover(self, entering, mouse_enter_pos):
-        if self.hidden:
-            return
-
-        if not self.editable:
-            return
-        _pygame.mouse.set_cursor(_pygame.SYSTEM_CURSOR_IBEAM if entering else _pygame.SYSTEM_CURSOR_ARROW)
-
-    def word_formatter(self, word: str, font: _pygame.font.Font, word_size: Coordinate) -> _pygame.Surface:
-        '''
-            This is a formatter/embedder. Its meant to give special control on how words are rendered inside the textbox. 
-            This is meant to be overriden and currently just renders plain white text.
-        '''
-        return font.render(word, True, COLORS["WHITE"])
-
-    def get_editor_text(self) -> str:
-        result = ""
-        for line in self.lines:
-            if len(line) <= 0:
-                result += "\n"
-            else:
-                for char in line:
-                    result += char
-        
-        return result
-
-    @property
-    def lines(self) -> list[str]:
-        return self._lines
-    
-    @lines.setter
-    def lines(self, value: str):
-        if isinstance(value, str):
-            self._lines = value.split("\n")
-        elif isinstance(value, list):
-            self._lines = value
-
-
-    @property
-    def current_line(self):
-        return self.lines[self.cursor_line]
-    
-    @current_line.setter
-    def current_line(self, value: str):
-        self.lines[self.cursor_line] = value
-
-    def before_cursor(self) -> str:
-        return self.current_line[:self.cursor_colum]
-    
-    def after_cursor(self) -> str:
-        return self.current_line[self.cursor_colum:]
-
-    def add_char_at_pos(self, char: str) -> _Self:
-        self.lines[self.cursor_line] = self.before_cursor() + char + self.after_cursor()
-        self.cursor_colum += 1
-        return self
-
-    def remove_char_at_pos(self) -> _Self:
-        if self.cursor_colum > 0:
-            self.lines[self.cursor_line] = self.current_line[:self.cursor_colum-1] + self.after_cursor()
-            self.cursor_colum -= 1
-        elif self.cursor_line > 0:
-            now = self.after_cursor()
-            self.lines.remove(now)
-            self.cursor_line -= 1
-            self.cursor_colum = len(self.current_line)
-            self.lines[self.cursor_line] = self.current_line + now
-        
-        return self
-
-    def add_line(self) -> _Self:
-        this = self.after_cursor()
-        this_2 = self.before_cursor()
-
-        self.lines[self.cursor_line] = this
-        self.lines.insert(self.cursor_line, this_2)
-        self.cursor_line += 1
-        if len(this_2) > len(self.current_line):
-            self.cursor_colum = 0
-        
-        return self
-
-    def set_cursor_position(self, mouse_pos: Coordinate) -> _Self:
-        mouse_pos = (mouse_pos[0] - self.position[0], mouse_pos[1] - self.position[1])
-        self.cursor_line = min(len(self.lines)-1, (mouse_pos[1] + self.text_scroll) // self.line_gap)
-
-        for x in range(len(self.current_line)):
-            if self.font.size(self.current_line[:x])[0] > mouse_pos[0]:
-                self.cursor_colum = x
-                break
-            else:
-                self.cursor_colum = x
-        else:
-            self.cursor_colum = len(self.current_line)
-        
-        return self
-
-    def add_history(self) -> _Self:
-        self.undo_stack.insert(( self.cursor_line,self.cursor_colum, self.lines[self.cursor_line] ))
-        return self
-
-    def handle_event(self, event: _pygame_event_type):
-        self.handle_event_elements(event)
-
-        if event.type == _pygame.MOUSEBUTTONDOWN and event.button == 1 and not self.hidden:
-            if not hasattr(self, "on_selected"):
-                result = self.mouse_hovering
-            else:
-                result = self.on_selected(self, event, self.local_mouse_position if self.parent else event.pos)
-            
-            if not result and self.focused:
-                if hasattr(self, "on_focus_lost"):
-                    self.on_focus_lost(self.get_editor_text())
-                    _pygame.mouse.set_system_cursor(_pygame.SYSTEM_CURSOR_ARROW)
-
-            self.focused = result
-            if self.focused:
-                self.set_cursor_position(self.local_mouse_position)
-        
-        if event.type == _pygame.MOUSEWHEEL and self.focused and self.mouse_hovering:
-            self.text_scroll += event.y*-5
-            if self.text_scroll < 0:
-                self.text_scroll = 0
-        
-        if event.type == _pygame.KEYDOWN and self.focused and self.editable:
-            self.max_scroll = self.font.size(self.get_editor_text())[1]
-
-            self.cursor_visible = True
-            self.cur_time = _time.time()
-            if event.key == _pygame.K_BACKSPACE:
-                self.add_history()
-                self.remove_char_at_pos()
-                self.start_held_key_press(_pygame.K_BACKSPACE)
-
-            elif event.key == _pygame.K_LEFT:
-                if self.cursor_colum > 0:
-                    self.cursor_colum -= 1
-                elif self.cursor_line > 0:
-                    self.cursor_line -= 1
-                    self.cursor_colum = len(self.current_line)
-            elif event.key == _pygame.K_RIGHT:
-                if self.cursor_colum < len(self.current_line):
-                    self.cursor_colum += 1
-                elif self.cursor_line < len(self.lines) - 1:
-                    this = self.current_line
-                    self.cursor_line += 1
-                    self.cursor_colum = 0
-            elif event.key == _pygame.K_RETURN:
-                self.add_line()
-                self.start_held_key_press(_pygame.K_RETURN)
-            elif event.key == _pygame.K_UP:
-                if self.cursor_line > 0:
-                    self.cursor_line -= 1
-            elif event.key == _pygame.K_DOWN:
-                if self.cursor_line < len(self.lines) - 1:
-                    self.cursor_line += 1
-            elif event.key == _pygame.K_v and _pygame.key.get_pressed()[_pygame.K_LCTRL] and _pygame.scrap.get_init():
-                self.add_history()
-                copied = get_clipboard_text()
-                self.lines[self.cursor_line] = self.before_cursor() + copied + self.after_cursor()
-                self.cursor_colum += len(copied)
-            elif event.key == _pygame.K_z and _pygame.key.get_pressed()[_pygame.K_LCTRL]:
-                self.undo_stack.undo()
-            elif event.key == _pygame.K_TAB:
-                self.add_history()
-                self.add_char_at_pos("    ")    
-            else:
-                if len(event.unicode) > 0 and event.unicode.isprintable():
-                    self.add_history()
-                    self.add_char_at_pos(event.unicode)
-                    self.start_held_key_press(event.unicode)
-
-        if event.type == _pygame.KEYUP and self.focused and self.editable:
-            if event.unicode == self._held_key_code or event.key == self._held_key_code:
+            if event.unicode == self._held_key_code or event.key == self._held_key_code or _pygame.K_LCTRL | self._held_key_code:
                 self.held_key = False
 
-    def start_held_key_press(self, char: str | int) -> _Self:
+    def _start_quick_add(self, char):
         self.held_key = True
         self._held_key_code = char
         self._held_key_tick = _time.time()
 
-        return self
+    def _apply_held_key(self):
+        if self.focused and self.held_key and _time.time() - self._held_key_tick > 0.65 and _time.time() - self._now_held_tick > 0.03:
+            self._now_held_tick = _time.time()
+            if self._held_key_code == _pygame.K_BACKSPACE:
+                self.remove_char()
+            elif self._held_key_code == _pygame.K_RETURN:
+                self.handle_return()
+            elif self._held_key_code == _pygame.K_z + _pygame.K_LCTRL:
+                self.undo_stack.undo()
+            elif self._held_key_code == _pygame.K_v + _pygame.K_LCTRL:
+                self.paste_into(get_clipboard_text())
+            else:
+                self.add_char(self._held_key_code)
 
-    def _render_line(self, line: str) -> _pygame.Surface:
+            if not self.multi_line:
+                self.check_bounds()
+ 
+    def on_mouse_hover(self, entering, mouse_enter_pos):
+        if self.hidden or not self.editable:
+            return
+        
+        _pygame.mouse.set_cursor(_pygame.SYSTEM_CURSOR_IBEAM if entering else _pygame.SYSTEM_CURSOR_ARROW)
+ 
+    def on_focus_lost(self, was_enter: bool, text: str):
+        ''' Override me. '''
+ 
+    def on_focus(self):
+        ''' Override me. '''
+ 
+    def select_text_box(self):
+        self.on_focus()
+        self.focused = True
+        return self
+ 
+    def exit_box(self, was_enter: bool):
+        self.on_focus_lost(was_enter, self.text)
+        return self
+ 
+    def check_bounds(self):
+        if self.font.size(self.text)[0] < self.surface.get_width() - self.text_offset_input:
+            self.scroll_x = 0
+            return self
+
+        x_pos = self.get_pixel_x()
+
+        if x_pos - self.scroll_x < self.text_offset_input:
+            self.scroll_x = max(0, x_pos - self.text_offset_input - self._text_offset)
+        elif x_pos > self.surface.get_width() - self.text_offset_input:
+            self.scroll_x = x_pos - self.surface.get_width() + self.text_offset_input + self._text_offset
+
+        return self
+ 
+    def get_pixel_x(self):
+        return self.font.size(self.before_cursor())[0]
+ 
+    def set_cursor_position(self, mouse_pos):
+        if self.multi_line:
+            local = (mouse_pos[0] - self.position[0] + self._text_offset, mouse_pos[1] - self.position[1])
+            self.cursor_line = min(len(self.lines) - 1, max(0, (local[1] + self.text_scroll) // self.line_gap))
+            for x in range(len(self.current_line) + 1):
+                if self.font.size(self.current_line[:x])[0] > local[0]:
+                    self.cursor_colum = x
+                    return self
+            self.cursor_colum = len(self.current_line)
+        else:
+            self.cursor_line = 0
+            for i in range(len(self.current_line) + 1):
+                if self.font.size(self.current_line[:i])[0] > self.local_mouse_position[0] - self.position[0] + self.scroll_x + self._text_offset:
+                    self.cursor_colum = i
+                    return self
+            self.cursor_colum = len(self.current_line)
+        return self
+ 
+    def _draw_single_line(self):
+        if self.has_selection:
+            (_, sc), (_, ec) = self.get_selection_range()
+            x0 = self.font.size(self.text[:sc])[0] - self.scroll_x + self._text_offset
+            x1 = self.font.size(self.text[:ec])[0] - self.scroll_x + self._text_offset
+
+            _pygame.draw.rect(self.surface, self.highlight_color,
+                               (x0 + self._text_offset, 1, x1 - x0, self.surface.get_height()))
+ 
+        color = COLORS["WHITE"] if len(self.text) > 0 else self.placeholder_color
+        surf = self.font.render(self.text if self.text else self.placeholder_text, True, color)
+        self.surface.blit(surf, (-self.scroll_x + self._text_offset, self.surface.get_height() / 2 - surf.get_height() / 2))
+ 
+        if self.focused and self.cursor_visible and self.editable:
+            x_pos = self.get_pixel_x()
+            _pygame.draw.line(self.surface, COLORS["WHITE"],
+                               (x_pos - self.scroll_x + self._text_offset, 2),
+                               (x_pos - self.scroll_x + self._text_offset, 
+                                self.surface.get_height() - self.surface.get_height() / 8), 2)
+ 
+    def _draw_multi_line(self):
+        self.max_scroll = self.surface.get_height() - 1
+        first = max(0, int(self.text_scroll // self.line_gap))
+        count = int(self.surface.get_height() // self.line_gap) + 2
+        last = min(len(self.lines), first + count)
+ 
+        if self.has_selection:
+            (sl, sc), (el, ec) = self.get_selection_range()
+            for i in range(max(first, sl), min(last, el + 1)):
+                line = self.lines[i]
+                start_col = sc if i == sl else 0
+                end_col = ec if i == el else len(line)
+                x0 = self.font.size(line[:start_col])[0]
+                x1 = self.font.size(line[:end_col])[0] if line else x0 + 6
+                y = i * self.line_gap - self.text_scroll
+                _pygame.draw.rect(self.surface, self.highlight_color,
+                                   (x0, y, max(2, x1 - x0), self.line_gap))
+ 
+        for i in range(first, last):
+            y = i * self.line_gap - self.text_scroll
+            line_surf = self._render_line(self.lines[i])
+            self.surface.blit(line_surf, (0, y))
+ 
+        if self.cursor_visible and self.cursor_enabled and self.focused and self.editable:
+            cx = self.font.size(self.current_line[:self.cursor_colum])[0]
+            cy = (self.cursor_line * self.line_gap) - self.text_scroll
+            _pygame.draw.line(self.surface, COLORS["WHITE"], (cx, cy), 
+                              (cx, cy + self.line_gap))
+
+    def _get_surf_line(self, line: str):
+        width = max(1, self.font.size(line)[0])
+        surf = _pygame.Surface((width, self.line_gap), _pygame.SRCALPHA)
+        surf.blit(self.word_formatter(line, self.font, self.font.size(line)), (0, 0))
+        return surf
+ 
+    def _render_line(self, line: str):
         cached = self._line_cache.get(line)
         if cached is not None:
             return cached
 
-        width = max(1, self.font.size(line)[0])
-        surf = _pygame.Surface((width, self.line_gap), _pygame.SRCALPHA)
-        text_surf = self.word_formatter(line, self.font, self.font.size(line))
-        surf.blit(text_surf, (0, 0))
+        surf = self._get_surf_line(line)
 
         if len(self._line_cache) > self._MAX_CACHE:
             self._line_cache.clear()
         self._line_cache[line] = surf
         return surf
+ 
+    def word_formatter(self, word, font, word_size):
+        return font.render(word, True, COLORS["WHITE"])
 
+    def update(self, dt: float, update_elements: bool=True):
 
-    def draw(self, target_surface: _pygame.Surface) -> None:
-        if len(self.lines) <= 0:
-            self.lines = [""]
+        if not self.editable:
+            self.cursor_visible = False
+        
+        return super().update(dt, update_elements)
+
+    def draw(self, target_surface=None) -> None:
+        if self.hidden:
+            if self.focused:
+                self.exit_box(False)
+            return
+        if self.size[0] <= 0 or self.size[1] <= 0:
+            return
+ 
         self.surface.fill(COLORS["TRANSPARENT"])
-        self.max_scroll = self.surface.get_height() - 1
-
-        if self.focused and self.held_key:
-            if _time.time() - self._held_key_tick > 0.65:
-                if self._held_key_code == _pygame.K_BACKSPACE:
-                    self.remove_char_at_pos()
-                elif self._held_key_code == _pygame.K_RETURN:
-                    self.add_line()
-                else:
-                    self.add_char_at_pos(self._held_key_code)
-
-        _pygame.draw.rect(self.surface, COLORS["GRAY"],
-                          self._get_scrollbar_rect(self.text_scroll, self.max_scroll, self.scrollbar_width))
-
-        first_visible = max(0, int(self.text_scroll // self.line_gap))
-        visible_count = int(self.surface.get_height() // self.line_gap) + 2
-        last_visible = min(len(self.lines), first_visible + visible_count)
-
-        for i in range(first_visible, last_visible):
-            y_pix = i * self.line_gap - self.text_scroll
-            line_surf = self._render_line(self.lines[i])
-            self.surface.blit(line_surf, (0, y_pix))
-
-        if _time.time() - self.cur_time > 0.6 and self.cursor_enabled and self.focused:
-            self.cur_time = _time.time()
+        self._apply_held_key()
+ 
+        if self.multi_line:
+            self._draw_multi_line()
+        else:
+            self._draw_single_line()
+ 
+        if self.focused and _time.time() - self.now > 0.5 and self.editable:
+            self.now = _time.time()
             self.cursor_visible = not self.cursor_visible
-
-        if self.cursor_visible and self.cursor_enabled and self.focused:
-            cx = self.font.size(self.current_line[:self.cursor_colum])[0]
-            cy = (self.cursor_line * self.line_gap) - self.text_scroll
-            _pygame.draw.line(self.surface, COLORS["WHITE"], (cx, cy), (cx, cy + self.line_gap))
-            if cx > self.surface.get_width():
-                self.add_line()
-
-        self._base_draw(target_surface)
+        elif not self.focused:
+            self.cursor_visible = True
+ 
+        self.draw_elements(self.surface)
+        self._base_draw(target_surface, self.focused_color if self.focused else self.background_color)
 
 class Bar(UIElement):
     '''
@@ -2018,8 +2014,6 @@ class Menu(UIElement):
         elif event.type == _pygame.MOUSEWHEEL and self.focused and self.scrollable and self.mouse_hovering:
             for v in self.children:
                 if isinstance(v, Menu) and v.focused and v.parent is self:
-                    return
-                elif isinstance(v, MultiLineTextBox) and v.focused and v.parent is self:
                     return
 
             self.scroll_velocity = event.y*-self.scroll_speed
@@ -2476,7 +2470,7 @@ def draw_tree_view(tree_view: list[tuple[UIElement, int]], surface: _pygame.Surf
         draw_text(text, (text_offset[0]+entry[1]*25, y), COLORS["WHITE"], surface, font)
         y += 15
 
-print(f"SparseGUI v1.2.6 (Python {_sys.version[0:6]}, pygame {_pygame.ver})")
+print(f"SparseGUI v1.2.8 (Python {_sys.version[0:6]}, pygame {_pygame.ver})")
 
 # Defining what is imported if import * is used on this module
 __all__: list[str] = [name for name, obj in globals().items() if not (name[0] == "_" or name.startswith("_"))]
