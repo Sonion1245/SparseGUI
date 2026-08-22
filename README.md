@@ -13,7 +13,6 @@
     * TextButton
     * ImageButton
     * TextBox
-    * MultiLineTextBox
     * Bar
     * Menu
     * CheckBox
