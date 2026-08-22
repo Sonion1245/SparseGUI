@@ -340,22 +340,34 @@ class Canvas:
                 for event in events:
                     self.layer.handle_event(event)
 
-    def update(self, dt: float, surface: _pygame.Surface):
-        ''' Updates .layer elements then draws them. '''
-        if self.hidden: return
+    def update(self, dt: float):
+        '''
+            Updates current elements.
+        '''
+        if self.hidden:
+            return
+        
+        for element in self.layer:
+            element.update(dt)
+
+    def draw(self, surface: _pygame.Surface):
+        '''
+            Draws current elements.
+        '''
+        if self.hidden: 
+            return
 
         self.surface.fill(COLORS["TRANSPARENT"])
 
         self.layer.sort(key=lambda a: a.Z)
 
-        if self.layer:
-            for element in self.layer:
-                if element.hidden: continue
+        for element in self.layer:
+            if element.hidden: 
+                continue
 
-                element.update(dt)
-                element.draw(self.surface)
+            element.draw(self.surface)
 
-        surface.blit(self.surface, (0, 0))
+        surface.blit(self.surface, self.position)
 
 # ----------------------------
 # BASE CLASSES
@@ -488,8 +500,8 @@ class UIElement:
     @property
     def relative_position(self):
         return (
-            self.position[0] / self.parent.size[0] if not isinstance(self.parent, Canvas) else 1,
-            self.position[1] / self.parent.size[1] if not isinstance(self.parent, Canvas) else 1
+            self.position[0] / self.parent.size[0],
+            self.position[1] / self.parent.size[1]
         )
 
     @relative_position.setter
@@ -1393,7 +1405,7 @@ class ImageButton(ImageLabel):
 
 class TextBox(UIElement):
     '''
-        A text entry for text, setting multi_line will define wether it will support several lines or one line.
+        A text entry for text which supports single line entry and multiline entry.
     '''
 
     def __init__(self, position=(0, 0), size=(250, 25), parent=None,
@@ -1418,9 +1430,9 @@ class TextBox(UIElement):
         self.text_scroll = 0
         self.max_scroll = 300
         self.scrollbar_width = 6
-        self.line_gap = 15
  
-        self.font = font or (_pygame.font.SysFont("consolas", self.line_gap))
+        self.font = font or _pygame.font.SysFont("consolas", self.surface.get_height()-5)
+        self.line_gap = self.font.size(" ")[1] + 4
         self.focused = False
         self.editable = True
         self.cursor_visible = True
@@ -1528,15 +1540,21 @@ class TextBox(UIElement):
     def add_char(self, char: str) -> _Self:
         if self.has_selection:
             self.erase_selection()
+        
         self._register_undo("char_add")
+
         self.current_line = self.before_cursor() + char + self.after_cursor()
         self.cursor_colum += 1
         self.cursor_visible = True
+
         self.now = _time.time()
 
         if self.multi_line:
             if self._get_surf_line(self.current_line).get_width() > self.size[0] - self.text_offset_input:
+                self.size = (self.size[0], self.size[1] + self.line_gap)
                 self.add_line()
+
+        self.clear_selection()
 
         return self
  
@@ -1569,6 +1587,7 @@ class TextBox(UIElement):
     def add_line(self) -> _Self:
         if not self.multi_line:
             return self
+
         after, before = self.after_cursor(), self.before_cursor()
         self.current_line = after
         self.lines.insert(self.cursor_line, before)
@@ -1691,9 +1710,11 @@ class TextBox(UIElement):
     def paste_into(self, text: str):
         if self.multi_line:
             for line in text.split("\n"):
+                self._register_undo("pasting_multiline")
                 self.add_char(line)
                 self.cursor_colum += len(line)
         else:
+            self._register_undo("pasting_singleline")
             self.cursor_colum += len(text)
             self.add_char(text)
         
@@ -2572,7 +2593,7 @@ def draw_tree_view(tree_view: list[tuple[UIElement, int]], surface: _pygame.Surf
         draw_text(text, (text_offset[0]+entry[1]*25, y), COLORS["WHITE"], surface, font)
         y += 15
 
-print(f"SparseGUI v1.2.8 (Python {_sys.version[0:6]}, pygame {_pygame.ver})")
+print(f"SparseGUI v1.2.9 (pygame {_pygame.ver}, Python {_sys.version[0:6]})")
 
 # Defining what is imported if import * is used on this module
 __all__: list[str] = [name for name, obj in globals().items() if not (name[0] == "_" or name.startswith("_"))]
