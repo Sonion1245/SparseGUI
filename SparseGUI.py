@@ -19,15 +19,13 @@ from enum import Enum as _Enum
 from typing import Any as _Any
 from typing import Self as _Self
 from typing import Callable as _Callable
-from typing import Literal as _Literal
 from uuid import uuid4 as _uuid4
 
 # ----------------------------
 # GLOBALS
 # ----------------------------
 
-_pygame_event_type = _pygame.event.Event
-Coordinate = tuple[int, int]; # Coordinate
+Coordinate = tuple[int, int] # Coordinate
 
 _global_font = None # The global font used by the library as a placeholder for fonts not given to elements.
 _command_key = _pygame.K_LCTRL
@@ -48,13 +46,8 @@ def init(global_font_name="consolas", global_font_size=15) -> bool:
 
     return True
 
-# Decodes null bytes inside clipboard text and returns the final product.
 def get_clipboard_text() -> str:
-    copied_text = _pygame.scrap.get_text()
-    if not copied_text:
-        return ""
-
-    return copied_text
+    return _pygame.scrap.get_text()
 
 # Sets the clipboard text to the given text
 def set_clipboard_text(text: str) -> None:
@@ -234,24 +227,24 @@ class VideoElementData:
 class Canvas:
     '''
     The Canvas at which the top level widgets parented to. Call .update([event list here]) inside a game loop.\n
-    **layer**: list[UIElement] | UIelement | None
+    **children**: list[UIElement] | UIelement | None
     '''
-    def __init__(self, screen_size: Coordinate=(500, 400), layer: list | None=None, 
+    def __init__(self, screen_size: Coordinate=(500, 400), children: list | None=None, 
                  fill_color: tuple[int, int, int]=COLORS["TRANSPARENT"], position: Coordinate | None=None):
-        self.layer = layer or []
+        self.children = children or []
         self.hidden = False
         self.surface = _pygame.Surface(screen_size, _pygame.SRCALPHA)
         self.clip_root = True
         self.fill_color = fill_color
         self.position = position or (0, 0)
 
-        if self.layer:
-            for element in layer:
+        if self.children:
+            for element in children:
               element.parent = self
 
     def add_element(self, element):
         element.parent = self
-        self.layer.append(element)
+        self.children.append(element)
 
     @property
     def size(self):
@@ -263,13 +256,13 @@ class Canvas:
 
     def destroy(self):
         '''
-            Destroys the Canvas and its layer.
+            Destroys the Canvas and its children.
         '''
 
         self.hidden = True
         self.fill_color = COLORS["TRANSPARENT"]
         
-        for element in self.layer:
+        for element in self.children:
             element.destroy()
         
         self.surface = None
@@ -293,7 +286,7 @@ class Canvas:
             for child in item.children:
                 walk(child)
         
-        for element in self.layer:
+        for element in self.children:
             walk(element)
         
         return results
@@ -315,7 +308,7 @@ class Canvas:
                     for child in item.children:
                         walk(child)
         
-        for child in self.layer:
+        for child in self.children:
             walk(child)
 
         return stop, element
@@ -323,22 +316,17 @@ class Canvas:
     def get_size(self) -> Coordinate:
         return self.surface.get_size()
 
-    def handle_events(self, events: list[_pygame_event_type]):
+    def handle_event(self, event: _pygame.event.Event):
         '''
-            Handles the element events.
+            Handles the element events. This does nothing is the mouse isnt actively over the window surface.
         '''
         if not self.surface.get_rect(topleft=self.position).collidepoint(_pygame.mouse.get_pos()):
             return
         
-        if isinstance(self.layer, list):
-            for element in self.layer:
-                if element.hidden: continue
-                for event in events:
-                    element.handle_event(event)
-        else:
-            if not self.layer.hidden:
-                for event in events:
-                    self.layer.handle_event(event)
+        for element in self.children:
+            if element.hidden: continue
+
+            element.handle_event(event)
 
     def update(self, dt: float):
         '''
@@ -347,7 +335,7 @@ class Canvas:
         if self.hidden:
             return
         
-        for element in self.layer:
+        for element in self.children:
             element.update(dt)
 
     def draw(self, surface: _pygame.Surface):
@@ -359,9 +347,9 @@ class Canvas:
 
         self.surface.fill(COLORS["TRANSPARENT"])
 
-        self.layer.sort(key=lambda a: a.Z)
+        self.children.sort(key=lambda a: a.Z)
 
-        for element in self.layer:
+        for element in self.children:
             if element.hidden: 
                 continue
 
@@ -406,17 +394,27 @@ class UIElement:
 
         for v in self.children:
             v.parent = self
+
+    def get_point_offset(self) -> tuple[float | int, float | int]:
+        ''' This is a overider for a custom offset to be given. '''
+        return (0, 0)
+    
+    def _get_point_offset(self) -> tuple[float | int, float | int]:
+        ''' This is a overider for a custom offset to be given. This is ued internally '''
+        return (0, 0)
     
     def transform_point_to_local_space(self, point: Coordinate) -> Coordinate:
         '''
             Transforms the given point to the local space of the parent element. 
         '''
         selected = self.parent
+        offset = self.get_point_offset()
+        offset_2 = self._get_point_offset()
 
         while selected:
             point = (
-                point[0] - selected.position[0],
-                point[1] - selected.position[1] + (selected.scroll_y if isinstance(selected, Menu) else 0) - (selected.title_bar_height if isinstance(selected, SubWindow) else 0)
+                point[0] - selected.position[0] - offset[0] - offset_2[0],
+                point[1] - selected.position[1] + (selected.scroll_y if isinstance(selected, Menu) else 0) - (selected.title_bar_height if isinstance(selected, SubWindow) else 0) - offset[1] - offset_2[0]
             )
 
             selected = selected.parent if hasattr(selected, "parent") else None
@@ -465,7 +463,7 @@ class UIElement:
             if not comp.active: continue
             comp.update()
 
-    def handle_event_components(self, event: _pygame_event_type):
+    def handle_event_components(self, event: _pygame.event.Event):
         '''
             Passes the event to all the componets.
         '''
@@ -560,8 +558,8 @@ class UIElement:
         if self.parent:
             if not isinstance(self.parent, Canvas) and self in self.parent.children:
                 self.parent.children.remove(self)
-            elif isinstance(self.parent, Canvas) and self in self.parent.layer:
-                self.parent.layer.remove(self)
+            elif isinstance(self.parent, Canvas) and self in self.parent.children:
+                self.parent.children.remove(self)
             
             self.parent = None
 
@@ -703,14 +701,11 @@ class UIElement:
         mouse_over_parent = True
         current = self.parent
         while current:
-            if isinstance(current, Canvas):
-                break
-            
             if not current.surface.get_rect(topleft=current.screen_position).collidepoint(_pygame.mouse.get_pos()):
                 mouse_over_parent = False
                 break
             
-            current = current.parent
+            current = current.parent if hasattr(current, "parent") else None
         
         return mouse_over_parent
     
@@ -722,7 +717,7 @@ class UIElement:
         current = self.parent
 
         while current and result:
-            items = (current.layer if isinstance(current, Canvas) else current.children)
+            items = current.children
             for element in items:
                 if element is self:
                     continue
@@ -802,7 +797,7 @@ class UIElement:
 
             element.draw(target_surface)
         
-    def handle_event_elements(self, event: _pygame_event_type) -> None:        
+    def handle_event_elements(self, event: _pygame.event.Event) -> None:        
         self.handle_event_components(event)
 
         for element in self.children:
@@ -887,7 +882,7 @@ class UIElement:
 
         target_surface.blit(self.surface, pos)
     
-    def handle_event(self, event: _pygame_event_type) -> None:
+    def handle_event(self, event: _pygame.event.Event) -> None:
         ''' Handles the element interactivity. This is a placeholder and just handles components until overriden '''
         self.handle_event_elements(event)
 
@@ -945,7 +940,7 @@ class UIComponent:
         self.active = active
         self.priority = 1
     
-    def handle_event(self, event: _pygame_event_type) -> None:
+    def handle_event(self, event: _pygame.event.Event) -> None:
         '''
             Handles event for the componet. This is meant to be overriden and current does nothing.
         '''
@@ -961,7 +956,7 @@ class UIComponent:
             This updates the componet. This is meant to be overriden and currently does nothing.
         '''
     
-    def __eq__(self, value: _Self):
+    def __eq__(self, value: "UIComponent"):
         if isinstance(value, UIComponent):
             return self.component_id == value.component_id
         
@@ -1025,7 +1020,7 @@ class DragComponent(UIComponent):
         '''
         return True
     
-    def handle_event(self, event: _pygame_event_type):
+    def handle_event(self, event: _pygame.event.Event):
         if event.type == _pygame.MOUSEBUTTONDOWN and event.button == 1 and self.element.mouse_hovering and not self.element.hidden:
             if self.should_start_drag(event.pos):
                 self.drag_offset = (
@@ -1099,7 +1094,7 @@ class ClickableComponent(UIComponent):
             
             set_cursor_hand(entering)
 
-    def handle_event(self, event: _pygame_event_type):
+    def handle_event(self, event: _pygame.event.Event):
         if event.type == _pygame.MOUSEBUTTONUP and event.button == 1 and self.active:
             if self.is_icons_clickable():
                 return
@@ -1125,7 +1120,7 @@ class ResizeableComponent(UIComponent):
         '''
         return True
 
-    def handle_event(self, event: _pygame_event_type):
+    def handle_event(self, event: _pygame.event.Event):
         if event.type == _pygame.MOUSEBUTTONDOWN and self.element.mouse_hovering and self.element.mouse_over_parent() and not self.element.hidden:
             mouse_pos = _pygame.mouse.get_pos()
             _new_rect = _pygame.Rect(
@@ -1270,7 +1265,7 @@ class ImageLabel(UIElement):
         self.image = self._image
         return self
 
-    def handle_event(self, event: _pygame_event_type):
+    def handle_event(self, event: _pygame.event.Event):
         self.handle_event_components(event)
 
     def draw(self, target_surface: _pygame.Surface):
@@ -1353,7 +1348,7 @@ class TextButton(UIElement):
                     self.get_text_y_pos()
                 )
 
-    def handle_event(self, event: _pygame_event_type) -> None:
+    def handle_event(self, event: _pygame.event.Event) -> None:
         self.handle_event_elements(event)
 
         if event.type == _pygame.MOUSEBUTTONUP and self.mouse_hovering:
@@ -1400,7 +1395,7 @@ class ImageButton(ImageLabel):
     def on_mouse_hover(self, entering, mouse_enter_pos):
         self.click_component.on_mouse_hover(entering, mouse_enter_pos)
 
-    def handle_event(self, event: _pygame_event_type) -> None:
+    def handle_event(self, event: _pygame.event.Event) -> None:
         self.handle_event_elements(event)
 
 class TextBox(UIElement):
@@ -2035,7 +2030,7 @@ class Bar(UIElement):
         self.bar_percent = new_percent
         return self
 
-    def handle_event(self, event: _pygame_event_type) -> None:
+    def handle_event(self, event: _pygame.event.Event) -> None:
         self.handle_event_elements(event)
 
         if event.type == _pygame.MOUSEBUTTONDOWN and event.button == 1 and self.mouse_over_parent() and self.resizeable:
@@ -2115,7 +2110,7 @@ class Menu(UIElement):
     def get_layout_name(self) -> str:
         return self.layout.__class__.__name__
 
-    def handle_event(self, event: _pygame_event_type) -> None:
+    def handle_event(self, event: _pygame.event.Event) -> None:
         if not self._stop_handling_children_events:
             self.handle_event_elements(event)
 
@@ -2224,7 +2219,7 @@ class CheckBox(TextButton):
             *self.check_box_rect.size
         )
 
-    def handle_event(self, event: _pygame_event_type) -> None:
+    def handle_event(self, event: _pygame.event.Event) -> None:
         self.handle_event_elements(event)
 
     def draw(self, target_surface: _pygame.Surface) -> None:
@@ -2337,7 +2332,7 @@ class SubWindow(Menu):
         if self._close_button.get_rect(topleft=final_position).collidepoint(_pygame.mouse.get_pos()):
             self.destroy()
 
-    def handle_event(self, event: _pygame_event_type):
+    def handle_event(self, event: _pygame.event.Event):
         super().handle_event(event)
 
         if event.type == _pygame.MOUSEBUTTONDOWN and self.focused:
@@ -2564,7 +2559,7 @@ def get_elements_tree(root_element: UIElement) -> list[tuple[UIElement, int]]:
             for child in element.children:
                 walk(child, depth + 1)
         else:
-            for element in element.layer:
+            for element in element.children:
                 walk(element, depth)
 
     walk(root_element)
