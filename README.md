@@ -3,7 +3,7 @@
  Fully built retained-mode GUI library built using python meant for pygame wihout needing to manually draw rects and poll actions done to them. 
 
  ## How to install
- Beofre starting you will need to install python. To install watch this https://www.youtube.com/watch?v=YKSpANU8jPE 
+ Before starting you will need to install python. To install watch this https://www.youtube.com/watch?v=YKSpANU8jPE 
  Make sure to first install pygame with the command ```pip install pygame```. To be able to use the library first download the file then add it to your project. It should appear in the top most of the dir.
 
 ## Features
