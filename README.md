@@ -8,7 +8,6 @@
 
 ## Features
  * Elements
-    * TextLabel
     * ImageLabel
     * TextButton
     * ImageButton
