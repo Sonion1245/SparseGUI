@@ -96,7 +96,7 @@ class LayoutAlignment(_Enum):
 
 class TextXAlignment(_Enum):
     '''
-        Determines where text goes inside elements on the X axis (TextButton, TextLabel are supported currently).
+        Determines where text goes inside elements on the X axis (TextButton are supported currently).
     '''
     left = 0
     middle = 1
@@ -104,7 +104,7 @@ class TextXAlignment(_Enum):
 
 class TextYAlignment(_Enum):
     '''
-        Determines where text goes inside elements on the Y axis (TextButton, TextLabel are supported currently).
+        Determines where text goes inside elements on the Y axis (TextButton are supported currently).
     '''
     top = 0
     middle = 1
