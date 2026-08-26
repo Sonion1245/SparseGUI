@@ -53,10 +53,10 @@ def main():
     canvas = SparseGUI.Canvas(WINDOW_SIZE, [
         SparseGUI.SubWindow((150, 150), title="My Example SparseGUI Window!", children=[
             SparseGUI.TextButton("Click me!", action=lambda: print("[EVENT LOG]: Click me clicked!"), background_color=(45, 45, 45)),
-            SparseGUI.TextBox(placeholder_text="Type in here...", background_color=(20, 20, 20),
-                              on_focus_lost=lambda enter, text: print("[EVENT LOG]: Textbox focus lost!")),
-            SparseGUI.TextLabel("Text label!")
-        ]).add_component(SparseGUI.ResizeableComponent)[0].apply_layout(SparseGUI.VerticalLayout, item_gap=10) # Auto sorts the elements in positioning.
+            SparseGUI.TextBox(on_focus_lost=lambda enter, _: print(f"[EVENT LOG]: Textbox lost focus, exited from enter: {enter}"), 
+                              on_focus=lambda: print("[EVENT LOG]: Textbox gained focus!"), clear_text_on_focus=False),
+            SparseGUI.TextBox().set_as_label(True).set_single_text("Text label!")
+        ]).add_component(SparseGUI.ResizeableComponent)[0].apply_layout(SparseGUI.VerticalLayout, item_gap=10).set_scrollable(False) # Auto sorts the elements in positioning.
     ])
 
     # Starting game loop.
@@ -71,23 +71,27 @@ def main():
         for event in events:
             if event.type == pygame.QUIT:
                 running = False
+            
+            # Handling canvas elements.    
+            canvas.handle_event(event)
 
-        # Handling canvas elements.    
-        canvas.handle_events(events)
-
-        # Updating and drawing elements.
+        # Updating elements.
+        canvas.update(dt)
 
         root.fill((45, 45, 45))
 
-        # Updating the canvas for elements to appear. dt is passed so tweening and frame based animations work correctly.
-        canvas.update(dt, root)
-
+        canvas.draw(root)
+    
         # Show current frame.
         pygame.display.flip()
     
     # Quit out the program and clean up pygame.
     pygame.quit()
     exit()
+
+# Running main.
+if __name__ == "__main__":
+    main()
 
 # Running main.
 if __name__ == "__main__":
