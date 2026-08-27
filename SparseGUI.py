@@ -281,10 +281,9 @@ class Event:
 
 class Canvas:
     '''
-    The Canvas at which the top level widgets parented to. Call .update([event list here]) inside a game loop.\n
-    **children**: list[UIElement] | UIelement | None
+        The Canvas at which the top level widgets parented to.
     '''
-    def __init__(self, screen_size: Coordinate=(500, 400), children: list | None=None, 
+    def __init__(self, screen_size: Coordinate=(500, 400), children: list["UIElement"] | None=None, 
                  fill_color: tuple[int, int, int]=COLORS["TRANSPARENT"], position: Coordinate | None=None):
         self.children = children or []
         self.hidden = False
@@ -346,7 +345,7 @@ class Canvas:
         
         return results
 
-    def any_gui_active(self) -> tuple[bool, _Any]:
+    def any_gui_active(self) -> tuple[bool, "UIElement"]:
         '''
             Returns if any GUI is currently active. If so then returns a tuple of True and the element.
         '''
@@ -618,10 +617,7 @@ class UIElement:
         self.components.clear()
 
         if self.parent:
-            if not isinstance(self.parent, Canvas) and self in self.parent.children:
-                self.parent.children.remove(self)
-            elif isinstance(self.parent, Canvas) and self in self.parent.children:
-                self.parent.children.remove(self)
+            self.parent.children.remove(self)
             
             self.parent = None
 
@@ -797,10 +793,12 @@ class UIElement:
         return self
 
     def _register_watch_property(self, name: str):
-        if not hash(getattr(self, name)):
+        attr = getattr(self, name)
+
+        if not isinstance(attr, (int, float)) and not hash(attr):
             raise TypeError(f"Unable to watch property by name ({name}) as it isnt unhashable")
         
-        self._watchable_properties.append( (name, getattr(self, name)) )
+        self._watchable_properties.append( (name, attr) )
 
     def update(self, dt: float, update_elements: bool=True) -> None:
         self.surface.set_alpha(self.surface_transparency*255)
@@ -1066,16 +1064,8 @@ class DragComponent(UIComponent):
         self.drag_offset = (0, 0)
         self.dragging = False
         self.offset = offset
-
-    def drag_start(self):
-        '''
-            A callback for when the componnent starts dragging. This is meant to be overriden and does nothing.
-        '''
-    
-    def drag_end(self):
-        '''
-            A callback for when the componnent ends dragging. This is meant to be overriden and does nothing.
-        '''
+        self.drag_start = Event()
+        self.drag_end = Event()
 
     def should_start_drag(self, mouse_pos: Coordinate) -> bool:
         '''
@@ -1090,8 +1080,9 @@ class DragComponent(UIComponent):
                     event.pos[0] - self.element.screen_position[0],
                     event.pos[1] - self.element.screen_position[1]
                 )
+
                 self.dragging = True
-                self.drag_start()
+                self.drag_start.fire()
         
         if event.type == _pygame.MOUSEMOTION and self.dragging:
             mouse_pos = self.element.local_mouse_position
@@ -1108,7 +1099,7 @@ class DragComponent(UIComponent):
 
         if event.type == _pygame.MOUSEBUTTONUP and event.button == 1 and self.dragging:
             self.dragging = False
-            self.drag_end()
+            self.drag_end.fire()
 
 class ClickableComponent(UIComponent):
     '''
@@ -1235,7 +1226,7 @@ class ResizeableComponent(UIComponent):
             self.resizing = False
 
 # ----------------------------
-# WIDGETS SET
+# WIDGET SET
 # ----------------------------
 
 class ImageLabel(UIElement):
@@ -1281,6 +1272,7 @@ class TextButton(UIElement):
                  parent: UIElement=None, clickable: bool=True, children: list[UIElement]=None, border_radius: int=0, name: str="Icon", font: _pygame.font.Font | None=None,
                  text_alignment: tuple[TextXAlignment, TextYAlignment]=(TextXAlignment.middle, TextYAlignment.middle)):
         super().__init__(parent, size, position, background_color, background_transparency, stroke_thickness, stroke_transparency, stroke_color, children=children, name=name, border_radius=border_radius)
+        self.on_click = Event()
         self.hidden = False
         self.clickable = clickable
         self._text = text
@@ -1296,12 +1288,13 @@ class TextButton(UIElement):
         self._final_color = self.background_color
 
         self.click_component: ClickableComponent = self.add_component(ClickableComponent)[1]
-        self.click_component.should_click = lambda _: self.clickable
+        self.click_component.should_click = lambda _: self.on_click.fire()
         self.click_component.on_click = self.action
 
         self.text_alignment_x = text_alignment[0]
         self.text_alignment_y = text_alignment[1]
         self.on_mouse_hover.connect(self._on_mouse_hover)
+        self.on_click.connect(action)
 
     @property
     def text(self):
@@ -1408,7 +1401,7 @@ class TextBox(UIElement):
                  focused_color=COLORS["GRAY"], stroke_color=COLORS["BLACK"], stroke_transparency=1,
                  placeholder_color=COLORS["LIGHTER-GRAY"], placeholder_text="...",
                  clear_text_on_focus=True, font=None,
-                 on_selected=None, on_focus_lost=None, is_label=False):
+                 on_selected=None, on_focus_lost: _Callable[[bool, str], None]=None, on_focus: _Callable=None, is_label=False):
         super().__init__(parent, size, position, background_color, background_transparency,
                           stroke_transparency=stroke_transparency, children=children, name=name,
                           stroke_thickness=2, border_radius=border_radius, stroke_color=stroke_color)
@@ -1416,6 +1409,17 @@ class TextBox(UIElement):
         self._multi_line = multi_line
         self.is_label = is_label
 
+        self.on_focus = Event()
+        self.on_focus_lost = Event()
+        self.on_multiline_resize_attempt = Event()
+        self.on_mouse_hover.connect(self._on_mouse_hover)
+
+        if on_focus_lost:
+            self.on_focus_lost.connect(on_focus_lost)
+
+        if on_focus:
+            self.on_focus.connect(on_focus)
+        
         self._lines: list[str] = ["Hello world!"]
         self.cursor_line = 0
         self.cursor_colum = 0
@@ -1452,18 +1456,29 @@ class TextBox(UIElement):
         self.undo_stack.on_undo = self._on_undo
 
         self.on_selected = on_selected
-        if on_focus_lost:
-            self.on_focus_lost = on_focus_lost
  
-        self.selection_anchor = (-1, -1)
+        self.selection_anchor = (0, 0)
         self.highlight_color = (166, 210, 255)
         self._mouse_selecting = False
         self.scale_multiline_size = True
 
-        self.on_mouse_hover.connect(self._on_mouse_hover)
-        self.on_focus = Event()
-        self.on_focus_lost = Event()
-        self.on_multiline_resize_attempt = Event()
+    def clear_text(self) -> _Self:
+        self.reset_cursor_position()
+        self._lines = [""]
+        if self._multi_line:
+            self.selection_anchor = (0, 0)
+            self.held_key = False
+            self._line_cache.clear()
+
+        return self
+
+    def set_single_text(self, text: str) -> _Self:
+        if self.multi_line:
+            return self
+        
+        self.current_line = ""
+        self.current_line = text
+        return self
 
     @property
     def multi_line(self):
@@ -1733,7 +1748,7 @@ class TextBox(UIElement):
         
         self.clear_selection()
 
-    def reset_cursor_position(self):
+    def reset_cursor_position(self) -> _Self:
         if not self.multi_line:
             self.cursor_colum = 0
             self.scroll_x = 0
@@ -1741,6 +1756,8 @@ class TextBox(UIElement):
             self.cursor_colum = 0
             self.cursor_line = 0
             self.text_scroll = 0
+
+        return self
 
     def handle_event(self, event) -> None:
         self.handle_event_elements(event)
@@ -1963,7 +1980,7 @@ class TextBox(UIElement):
         return super().update(dt, update_elements)
 
     def _draw_single_line(self):
-        if self.has_selection:
+        if self.has_selection and not self.is_label:
             _, sc, _, ec = self.get_selection_range()
             x0 = self.font.size(self.text[:sc])[0] - self.scroll_x + self._text_offset
             x1 = self.font.size(self.text[:ec])[0] - self.scroll_x + self._text_offset
@@ -1989,7 +2006,7 @@ class TextBox(UIElement):
         count = int(self.surface.get_height() // self.line_gap) + 2
         last = min(len(self.lines), first + count)
  
-        if self.has_selection:
+        if self.has_selection and not self.is_label:
             (selection_line, selection_colum), (end_line, end_colum) = self.get_selection_range()
 
             for i in range(max(first, selection_line), min(last, end_line + 1)):
@@ -2236,14 +2253,17 @@ class CheckBox(TextButton):
                  on_flip: _Callable=lambda enabled: print(enabled), size: Coordinate=(160, 30), border_radius: int=0, background_transparency: float=1, stroke_transparency: float=1):
         def flip() -> None: 
             self._checked = not self._checked
-            if hasattr(self, "on_flip") and callable(self.on_flip):
-                self.on_flip(self.get_value())
+            self.on_flip.fire(self.get_value())
 
         super().__init__(text, position, size=size, parent=parent, clickable=True, action=flip, background_color=COLORS["LIGHTER-GRAY"], border_radius=border_radius, stroke_transparency=stroke_transparency, background_transparency=background_transparency)
 
+        self.on_flip = Event()
+
+        if on_flip:
+            self.on_flip.connect(on_flip)
+        
         self._checked = checked
         self.stroke_thickness = 2
-        self.on_flip = on_flip
         height = self.size[1]-15
         self.check_box_rect = _pygame.Rect(5, self.size[1]/2-height/2, self.size[0]*0.10, height)
         self.click_component.should_click = lambda mouse_pos: self.get_checkbox_rect().collidepoint(mouse_pos)
@@ -2622,7 +2642,7 @@ def draw_tree_view(tree_view: list[tuple[UIElement, int]], surface: _pygame.Surf
         draw_text(text, (text_offset[0]+entry[1]*25, y), COLORS["WHITE"], surface, font)
         y += 15
 
-print(f"SparseGUI v1.3.2 (pygame {_pygame.ver}, Python {_sys.version[0:6]})")
+print(f"SparseGUI v1.3.3 (pygame {_pygame.ver}, Python {_sys.version[0:6]})")
 
 # Defining what is imported if import * is used on this module
 __all__: list[str] = [name for name, obj in globals().items() if not (name[0] == "_" or name.startswith("_"))]
