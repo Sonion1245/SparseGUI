@@ -16,6 +16,7 @@
     * Menu
     * CheckBox
     * SubWindow
+    * VideoElement
 
 * Allows for auto positioning of elements
 * Scene graph style element
