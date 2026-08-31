@@ -55,8 +55,9 @@ def main():
             SparseGUI.TextBox(on_focus_lost=lambda enter, _: print(f"[EVENT LOG]: Textbox lost focus, exited from enter: {enter}"), 
                               on_focus=lambda: print("[EVENT LOG]: Textbox gained focus!"), clear_text_on_focus=False),
             SparseGUI.TextBox().set_as_label(True).set_single_text("Text label!")
-        ]).add_component(SparseGUI.ResizeableComponent)[0].apply_layout(SparseGUI.VerticalLayout, item_gap=10).set_scrollable(False) # Auto sorts the elements in positioning.
+        ]).add_component(SparseGUI.ResizeableComponent)[0].add_component(SparseGUI.VerticalSortComponnent)[0].set_scrollable(False) # Auto sorts the elements in positioning.
     ])
+    canvas.children[0].drag_component.tween_position = True
 
     # Starting game loop.
     running, clock = True, pygame.time.Clock()
@@ -91,6 +92,11 @@ def main():
 # Running main.
 if __name__ == "__main__":
     main()
+
+# Running main.
+if __name__ == "__main__":
+    main()
+
 
 # Running main.
 if __name__ == "__main__":
