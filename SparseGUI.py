@@ -11,7 +11,6 @@
 # IMPORTS
 # ---------------------------
 
-# Getting modules/classes
 import pygame as _pygame
 import time as _time
 import sys as _sys
@@ -19,22 +18,21 @@ from enum import Enum as _Enum
 from typing import Any as _Any
 from typing import Self as _Self
 from typing import Callable as _Callable
+from typing import Literal as _Literal
 from uuid import uuid4 as _uuid4
 
 # ----------------------------
 # GLOBALS
 # ----------------------------
 
-Coordinate = tuple[int, int] # Coordinate
-
-_global_font = None # The global font used by the library as a placeholder for fonts not given to elements.
-_command_key = _pygame.K_LCTRL
+Coordinate = tuple[int, int]
+_global_font = None
 
 def command_key():
     '''
-        The key used for textbox's special case features, such as pasting or copying.
+        The key used for textbox's special case features etc. This can be set to return different keys.
     '''
-    return _command_key
+    return _pygame.K_LCTRL
 
 def init(global_font_name="consolas", global_font_size=15) -> bool:
     global _global_font
@@ -46,18 +44,31 @@ def init(global_font_name="consolas", global_font_size=15) -> bool:
 
     return True
 
+def get_mouse_position() -> Coordinate:
+    '''
+        Gets the mouses position. This can be set to return a different position, for example
+        multiple cursors can be implemented and this can return one.
+    '''
+    return _pygame.mouse.get_pos()
+
 def get_clipboard_text() -> str:
+    '''
+        Gets the clipboard text.
+    '''
     return _pygame.scrap.get_text().replace("\x00", "")
 
-# Sets the clipboard text to the given text
 def set_clipboard_text(text: str) -> None:
+    '''
+        Sets the current clipboard text to the new text.
+    '''
     _pygame.scrap.put_text(text)
 
-# Changes the cursor hand based off a toggle for the arrow and hand.
 def set_cursor_hand(enabled: bool, cursor: int=_pygame.SYSTEM_CURSOR_HAND) -> None:
+    '''
+        Switchs the cursors system cursor to the provided cursor based or the arrow based off a toggle.
+    '''
     _pygame.mouse.set_cursor(cursor if enabled else _pygame.SYSTEM_CURSOR_ARROW)
 
-# Holds colors via str to tuple pairs
 COLORS = {
     "BLACK": (0, 0, 0),
     "WHITE": (255, 255, 255),
@@ -83,7 +94,6 @@ COLORS = {
 # ENUMS
 # ----------------------------
 
-# Easy way to add modes to elements. In this case Menus.
 class LayoutAlignment(_Enum):
     '''
         The Layout enums for Menu layouts.
@@ -379,7 +389,7 @@ class Canvas:
         if self.hidden:
             return
         
-        if not self.surface.get_rect(topleft=self.position).collidepoint(_pygame.mouse.get_pos()):
+        if not self.surface.get_rect(topleft=self.position).collidepoint(get_mouse_position()):
             return
         
         for element in self.children:
@@ -394,7 +404,7 @@ class Canvas:
         if self.hidden:
             return
 
-        if not self.surface.get_rect(topleft=self.position).collidepoint(_pygame.mouse.get_pos()):
+        if not self.surface.get_rect(topleft=self.position).collidepoint(get_mouse_position()):
             return
         
         for element in self.children:
@@ -463,6 +473,9 @@ class UIElement:
 
         for v in self.children:
             v.parent = self
+            
+        if parent:
+            parent.add_child(self)
 
     def get_point_offset(self) -> Coordinate:
         ''' This is a overider for a custom offset to be given. This does NOT have an effect where the element is drawn '''
@@ -758,7 +771,7 @@ class UIElement:
             else:
                 rect = current.surface.get_rect(topleft=current.screen_position)
 
-            if not rect.collidepoint(_pygame.mouse.get_pos()):
+            if not rect.collidepoint(get_mouse_position()):
                 return False
 
             current = current.parent if hasattr(current, "parent") else None
@@ -789,7 +802,7 @@ class UIElement:
 
             current = current.parent if hasattr(current, "parent") else None
 
-        return self.surface.get_rect(topleft=self.screen_position).collidepoint(_pygame.mouse.get_pos()) and result
+        return self.surface.get_rect(topleft=self.screen_position).collidepoint(get_mouse_position()) and result
 
     def hide(self) -> _Self:
         if self.mouse_hovering and self.mouse_over_parent():
@@ -920,7 +933,7 @@ class UIElement:
         '''
             Returns the mouse position transformed into the local space of the elements parent.
         '''
-        pos = _pygame.mouse.get_pos()
+        pos = get_mouse_position()
         if not self.parent:
             return pos
 
@@ -1025,34 +1038,6 @@ class UIComponent:
             return self.component_id == value.component_id
         
         raise NotImplementedError(f"The data type of ({type(value)}) is not implemented.")
-
-class MenuLayout:
-    '''
-        Base class for Menulayouts. To sub class this make sure to define the base_update().\n
-        NOTE: These are meant to directly edit elements positions inside the parent Menu.
-    '''
-    def __init__(self, parent: "Menu", item_gap: int=25, horizontal_padding: int=5, vertical_padding: int=5, name: str="BaseUILayout"):
-        self.parent = parent
-        self.item_gap = item_gap
-        self.horizontal_padding = horizontal_padding
-        self.vertical_padding = vertical_padding
-        self.enabled = True
-        self.origin_pos_elements = [element.position for element in parent.children]
-        self.name = name
-    
-    def switch_enabled(self, enabled: bool) -> _Self:
-        self.enabled = enabled
-        return self
-
-    def update(self) -> None:
-        if not self.enabled:
-            return
-
-        if hasattr(self, "base_update") and callable(self.base_update):
-            self.base_update()
-    
-    def __str__(self):
-        return self.__class__.__name__
 
 # ----------------------------
 # COMPONENTS
@@ -1192,7 +1177,7 @@ class ResizeableComponent(UIComponent):
 
     def handle_event(self, event: _pygame.event.Event):
         if event.type == _pygame.MOUSEBUTTONDOWN and self.element.mouse_hovering and self.element.mouse_over_parent() and not self.element.hidden:
-            mouse_pos = _pygame.mouse.get_pos()
+            mouse_pos = get_mouse_position()
             _new_rect = _pygame.Rect(
                 self.element.size[0]-self.resize_range+self.element.screen_position[0],
                 self.element.size[1]-self.resize_range+self.element.screen_position[1],
@@ -1218,7 +1203,7 @@ class ResizeableComponent(UIComponent):
                 self.resizing = True
         
         if event.type == _pygame.MOUSEMOTION and self.resizing:
-            mouse_pos = _pygame.mouse.get_pos()
+            mouse_pos = get_mouse_position()
 
             def calculate_side(i: int):
                 return max(self.min_size[i], mouse_pos[i] - self.element.screen_position[i])
@@ -1244,6 +1229,90 @@ class ResizeableComponent(UIComponent):
             
         if event.type == _pygame.MOUSEBUTTONUP and self.resizing:
             self.resizing = False
+
+class FlowSortComponent(UIComponent):
+    '''
+        Sorts the parents children position from left -> right top -> bottom
+    '''
+    def __init__(self, element: UIElement, horizontal_padding: int=10, vertical_padding: int=10, row_gap: int=10, vertical_item_gap: int=10,
+                 horizontal_item_gap: int=10):
+        super().__init__(element, True)
+        self.horizontal_padding = horizontal_padding
+        self.vertical_padding = vertical_padding
+        self.row_gap = row_gap
+        self.vertical_item_gap = vertical_item_gap
+        self.horizontal_item_gap = horizontal_item_gap
+
+    def update(self, _: float):
+        x = self.horizontal_padding
+        y = self.vertical_padding
+
+        for element in self.element.children:
+            if element.hidden: continue
+
+            new_pos = (element.position[0], element.position[1])
+
+            if x > self.element.size[0]:
+                y += self.row_gap + self.vertical_item_gap
+                x = self.horizontal_padding
+
+            element.position = (x, y)
+
+            if element.position[0] + element.size[0] > self.element.size[0]:
+                y += self.row_gap + self.vertical_item_gap + element.size[1]
+                x = self.horizontal_padding
+                element.position = (x, y)
+
+            x += element.size[0] + self.horizontal_item_gap
+
+class VerticalSortComponnent(UIComponent):
+    '''
+        Sorts the parents children based off horizontal and vertical sort modes
+    '''
+    def __init__(self, element: UIElement, horizontal_padding: int=10, vertical_padding: int=10, row_gap: int=10,
+                 vertical_mode: LayoutAlignment=LayoutAlignment.up, horizontal_mode: LayoutAlignment=LayoutAlignment.left, item_gap: int=10):
+        super().__init__(element, True)
+        self.horizontal_padding = horizontal_padding
+        self.vertical_padding = vertical_padding
+        self.vertical_mode = vertical_mode
+        self.horizontal_mode = horizontal_mode
+        self.item_gap = item_gap
+
+    def update(self, _: float):
+        y = 0
+
+        if self.vertical_mode == LayoutAlignment.up:
+            y = self.vertical_padding
+        elif self.vertical_mode == LayoutAlignment.center:
+            y = self.element.size[1]/2
+        elif self.vertical_mode == LayoutAlignment.down:
+            y = self.element.size[1]
+
+        for element in self.element.children:
+            if not isinstance(element, UIElement): continue
+            if element.hidden: continue
+
+            new_pos = (element.position[0], y)
+            if self.vertical_mode == LayoutAlignment.down:
+                new_pos = (new_pos[0], y-element.size[1])
+            elif self.vertical_mode == LayoutAlignment.center:
+                new_pos = (new_pos[0], new_pos[1]-element.size[1]/2)
+            elif self.vertical_mode == LayoutAlignment.up:
+                new_pos = (new_pos[0], y)
+
+            if self.horizontal_mode == LayoutAlignment.left:
+                new_pos = (self.horizontal_padding, y)
+            elif self.horizontal_mode == LayoutAlignment.center:
+                new_pos = (self.element.size[0]/2-element.size[0]/2, y)
+            elif self.horizontal_mode == LayoutAlignment.right:
+                new_pos = (self.element.size[0]-element.size[0]-self.horizontal_padding-(self.element.scrollbar_width
+                                                                                        if isinstance(self.element, Menu) else 0), y)
+            
+            element.position = new_pos
+            if self.vertical_mode == LayoutAlignment.down:
+                y -= self.item_gap + element.size[1]
+            else:
+                y += self.item_gap + element.size[1]
 
 # ----------------------------
 # WIDGET SET
@@ -1445,11 +1514,12 @@ class TextBox(UIElement):
  
         self.scroll_x = 0
         self.text_scroll = 0
+        self.text_scroll_vy = 0
         self.max_scroll = 300
         self.scrollbar_width = 6
         self.line_gap = 14
  
-        self.font = font or _pygame.font.SysFont("consolas", self.surface.get_height()-5 if not multi_line else self.line_gap)
+        self.font = font or _pygame.font.SysFont("consolas", self.size[1]-5 if not multi_line else self.line_gap)
         self.focused = False
         self.editable = True
         self.cursor_visible = True
@@ -1482,6 +1552,15 @@ class TextBox(UIElement):
         self._mouse_selecting = False
         self.scale_multiline_size = True
 
+        self.on_property_changed.connect(self._size_changed)
+
+    def _size_changed(self, name: str, size: Coordinate):
+        if name != "size":
+            return
+        
+        if not self.multi_line:
+            self.font = _pygame.font.SysFont(self.font.name, self.size[1]-5)
+
     def clear_text(self) -> _Self:
         if len(self._lines) <= 1 and len(self._lines[0]) == 0:
             return self
@@ -1492,10 +1571,11 @@ class TextBox(UIElement):
             self.selection_anchor = (0, 0)
             self.held_key = False
             self._line_cache.clear()
-            size = (self.size[0], self.line_gap*len(self._lines))
-            
-            self.size = size
-            self.on_multiline_resize_attempt.fire(True, size)
+
+            if self.scale_multiline_size:
+                size = (self.size[0], self.line_gap*len(self._lines))
+                self.size = size
+                self.on_multiline_resize_attempt.fire(True, size)
 
         return self
 
@@ -1589,7 +1669,7 @@ class TextBox(UIElement):
 
         if self.multi_line:
             size = (self.size[0], self.size[1] + self.line_gap)
-            if self._get_surf_line(self.current_line).get_width() > self.size[0] - self.text_offset_input:
+            if self._get_surf_line(self.current_line).get_width() >= self.size[0] - self.text_offset_input:
                 self.size = size
                 self.on_multiline_resize_attempt.fire(True, size)
                 self.add_line()
@@ -1662,14 +1742,22 @@ class TextBox(UIElement):
  
     def move_left(self):
         if self.cursor_colum > 0:
-            self.cursor_colum -= 1
+            if not self.has_selection:
+                self.cursor_colum -= 1
+            else:
+                self.cursor_colum = self.selection_anchor[1]-1
+                self.clear_selection()
         elif self.multi_line and self.cursor_line > 0:
             self.cursor_line -= 1
             self.cursor_colum = len(self.current_line)
  
     def move_right(self):
         if self.cursor_colum < len(self.current_line):
-            self.cursor_colum += 1
+            if not self.has_selection:
+                self.cursor_colum += 1
+            else:
+                self.cursor_colum = self.selection_anchor[1]+1
+                self.clear_selection()
         elif self.multi_line and self.cursor_line < len(self.lines) - 1:
             self.cursor_line += 1
             self.cursor_colum = 0
@@ -1678,11 +1766,15 @@ class TextBox(UIElement):
         if self.multi_line and self.cursor_line > 0:
             self.cursor_line -= 1
             self.cursor_colum = min(self.cursor_colum, len(self.current_line))
+        elif self.multi_line and self.cursor_line == 0:
+            self.cursor_colum = 0
  
     def move_down(self):
         if self.multi_line and self.cursor_line < len(self.lines) - 1:
             self.cursor_line += 1
             self.cursor_colum = min(self.cursor_colum, len(self.current_line))
+        elif self.multi_line and self.cursor_line == len(self.lines) - 1:
+            self.cursor_colum = len(self.current_line)
  
     def handle_return(self):
         if self.multi_line:
@@ -1788,6 +1880,42 @@ class TextBox(UIElement):
 
         return self
 
+    def get_word(self, direction: _Literal[1] | _Literal[-1]=1) -> str:
+        if self.multi_line and direction < 0 and self.cursor_colum == 0 and self.cursor_line > 0:
+            self.move_up()
+            self.cursor_colum = len(self.current_line)
+            return ""
+        elif self.multi_line and direction > 0 and self.cursor_colum == len(self.current_line)-1 and self.cursor_line < len(self._lines)-1:
+            self.move_down()
+            self.cursor_colum = 0
+            return ""
+        
+        if self.current_line[
+            min(max(self.cursor_colum, 0), len(self.current_line)-1)
+        ].isspace():
+            return " "
+
+        start_i = self.cursor_colum
+        word = ""
+
+        if direction > 0:
+            while start_i < len(self.current_line) and not self.current_line[start_i].isspace():
+                word += self.current_line[start_i]
+                start_i += 1
+        else:
+            start_i = min(start_i, len(self.current_line)-1)
+            while start_i > 0 and not self.current_line[start_i].isspace():
+                word += self.current_line[start_i]
+                start_i -= 1
+
+        return word
+
+    def jump_left(self) -> None:
+        for _ in range(len(self.get_word(-1))): self.move_left()
+
+    def jump_right(self) -> None:
+        for _ in range(len(self.get_word())): self.move_right()
+
     def handle_event(self, event) -> None:
         self.handle_event_elements(event)
         if self.is_label:
@@ -1802,11 +1930,7 @@ class TextBox(UIElement):
             elif result:
                 self.select_text_box()
                 if self.clear_text_on_focus:
-                    self.text = ""
-                    if not self.multi_line:
-                        self.scroll_x = 0
-                    else:
-                        self.text_scroll = 0
+                    self.clear_text()
  
             self.focused = result
             if self.focused:
@@ -1817,6 +1941,9 @@ class TextBox(UIElement):
                 self._mouse_selecting = True
             else:
                 self.clear_selection()
+
+        if event.type == _pygame.MOUSEWHEEL and self.focused and self.multi_line:
+            self.text_scroll_vy += event.y*-3
  
         if event.type == _pygame.MOUSEBUTTONUP and event.button == 1:
             self._mouse_selecting = False
@@ -1840,22 +1967,42 @@ class TextBox(UIElement):
             elif event.key == _pygame.K_RETURN:
                 self.handle_return()
                 self._start_quick_add(_pygame.K_RETURN)
-            elif event.key == _pygame.K_LEFT:
-                self.clear_selection()
-                self.move_left()
             elif event.key == _pygame.K_HOME:
                 self.reset_cursor_position()
             elif event.key == _pygame.K_ESCAPE:
                 self.exit_box(False)
+            elif event.key == _pygame.K_LEFT:
+                self.clear_selection()
+
+                if _held_keys[_pygame.K_LSHIFT] and not self.has_selection:
+                    self.selection_anchor = (self.cursor_line, self.cursor_colum)
+
+                if not _held_keys[command_key()]:
+                    self.move_left()
+                else:
+                    self.jump_left()
             elif event.key == _pygame.K_RIGHT:
                 self.clear_selection()
-                self.move_right()
+
+                if _held_keys[_pygame.K_LSHIFT] and not self.has_selection:
+                    self.selection_anchor = (self.cursor_line, self.cursor_colum)
+                
+                if not _held_keys[command_key()]:
+                    self.move_right()
+                else:
+                    self.jump_right()
             elif event.key == _pygame.K_UP:
-                self.clear_selection()
-                self.move_up()
+                if not _held_keys[command_key()]:
+                    self.clear_selection()
+                    self.move_up()
+                elif self.multi_line:
+                    self.text_scroll -= self.line_gap
             elif event.key == _pygame.K_DOWN:
-                self.clear_selection()
-                self.move_down()
+                if not _held_keys[command_key()]:
+                    self.clear_selection()
+                    self.move_down()
+                else:
+                    self.text_scroll += self.line_gap
             elif event.key == _pygame.K_TAB:
                 self.add_char("    ")
                 self._start_quick_add(_pygame.K_TAB)
@@ -1937,16 +2084,16 @@ class TextBox(UIElement):
         return self
  
     def check_bounds(self):
-        if self.font.size(self.text)[0] < self.surface.get_width() - self.text_offset_input:
+        if self.font.size(self.text)[0] < self.size[0] - self.text_offset_input:
             self.scroll_x = 0
             return self
 
         x_pos = self.get_pixel_x()
 
-        if x_pos - self.scroll_x < self.text_offset_input:
+        if x_pos - self.scroll_x <= self.text_offset_input:
             self.scroll_x = max(0, x_pos - self.text_offset_input - self._text_offset)
-        elif x_pos > self.surface.get_width() - self.text_offset_input:
-            self.scroll_x = x_pos - self.surface.get_width() + self.text_offset_input + self._text_offset
+        elif x_pos >= self.size[0] - self.text_offset_input:
+            self.scroll_x = x_pos - self.size[0] + self.text_offset_input + self._text_offset
 
         return self
  
@@ -1955,8 +2102,9 @@ class TextBox(UIElement):
  
     def set_cursor_position(self, position: Coordinate):
         position = self.transform_point_to_local_space(position)
+
         if self.multi_line:
-            local = (position[0] - self.position[0] + self._text_offset, position[1] - self.position[1])
+            local = (position[0] - self.position[0] + self._text_offset, position[1] - self.position[1] + self.text_scroll)
             
             self.cursor_line = min(len(self.lines) - 1, max(0, round(local[1] / self.line_gap) ))
 
@@ -1970,7 +2118,7 @@ class TextBox(UIElement):
             self.cursor_line = 0
             for i in range(len(self.current_line) + 1):
                 if self.font.size(self.current_line[:i])[0] > position[0] - self.position[0] + self.scroll_x + self._text_offset:
-                    self.cursor_colum = i
+                    self.cursor_colum = i-1
                     return self
             self.cursor_colum = len(self.current_line)
         return self
@@ -1997,14 +2145,29 @@ class TextBox(UIElement):
  
     def word_formatter(self, word: str, font: _pygame.font.Font, word_size: Coordinate):
         '''
-            Used for custom rendering of a word in textbox. Only works for multi-line
+            Used for custom rendering of a word in textbox.
         '''
         return font.render(word, True, self.text_color)
 
     def update(self, dt: float, update_elements: bool=True):
-
         if not self.editable:
             self.cursor_visible = False
+
+        if self.is_label and self.focused:
+            self.exit_box(False)
+
+        if not self.is_label and self.mouse_hovering:
+            _pygame.mouse.set_cursor(_pygame.SYSTEM_CURSOR_IBEAM)
+
+        if self.multi_line:
+            if self.text_scroll_vy > 0:
+                self.text_scroll_vy = max(self.text_scroll_vy - 0.15, 0)
+            else:
+                self.text_scroll_vy = min(self.text_scroll_vy + 0.15, 0)
+
+            self.text_scroll += self.text_scroll_vy
+            
+            self.text_scroll = min(max(0, self.text_scroll), self.max_scroll)
         
         return super().update(dt, update_elements)
 
@@ -2017,22 +2180,19 @@ class TextBox(UIElement):
             _pygame.draw.rect(self.surface, self.highlight_color,
                                (x0 + self._text_offset, 1, x1 - x0, self.surface.get_height()))
 
-        '''text_surface = self.font.render(self.text if self.text else self.placeholder_text, True, 
-                                        self.text_color if len(self.text) > 0 else self.placeholder_color)
-        
-        self.surface.blit(text_surface, (-self.scroll_x + self._text_offset, self.surface.get_height() / 2 - text_surface.get_height() / 2))'''
-
         if len(self.text) > 0:
             x = self._text_offset
-            space_width = self.font.size(" ")[0]
+            font = self.font if not self.is_label else _pygame.font.SysFont(self.font.name, self.size[1]-round(len(self.text)*0.5))
+            # ^ Changes how the font based off label so text scales. MAY render long words weirdly
+            space_width = font.size(" ")[0]
 
             for word in self.text.split(" "):
                 surf = self._single_line_cache.get(word)
                 if not surf:
-                    surf = self.word_formatter(word, self.font, self.font.size(word))
+                    surf = self.word_formatter(word, font, font.size(word))
                     self._single_line_cache[word] = surf
 
-                self.surface.blit(surf, (x - self.scroll_x, self.surface.get_height() / 2 - surf.get_height() / 2))
+                self.surface.blit(surf, (x - self.scroll_x, self.size[1] / 2 - surf.get_height() / 2))
 
                 x += surf.get_width() + space_width
         else:
@@ -2051,6 +2211,13 @@ class TextBox(UIElement):
         first = max(0, int(self.text_scroll // self.line_gap))
         count = int(self.surface.get_height() // self.line_gap) + 2
         last = min(len(self.lines), first + count)
+
+        if self.cursor_visible and self.cursor_enabled and self.focused and self.editable and not self.is_label:
+            cursor_x = self.font.size(self.current_line[:self.cursor_colum])[0]
+            cursor_y = (self.cursor_line * self.line_gap) - self.text_scroll
+
+            _pygame.draw.line(self.surface, self.text_color, (cursor_x, cursor_y), 
+                              (cursor_x, cursor_y + self.line_gap))
  
         if self.has_selection and not self.is_label:
             (selection_line, selection_colum), (end_line, end_colum) = self.get_selection_range()
@@ -2072,25 +2239,15 @@ class TextBox(UIElement):
             line_y = i * self.line_gap - self.text_scroll
 
             self.surface.blit(self._render_line(self.lines[i]), (0, line_y))
- 
-        if self.cursor_visible and self.cursor_enabled and self.focused and self.editable and not self.is_label:
-            cursor_x = self.font.size(self.current_line[:self.cursor_colum])[0]
-            cursor_y = (self.cursor_line * self.line_gap) - self.text_scroll
 
-            _pygame.draw.line(self.surface, self.text_color, (cursor_x, cursor_y), 
-                              (cursor_x, cursor_y + self.line_gap))
+        scrollbar_rect = self._get_scrollbar_rect(self.text_scroll, self.max_scroll, self.scrollbar_width)
+        _pygame.draw.rect(self.surface, COLORS["BLACK"], scrollbar_rect)
 
     def draw(self, target_surface=None) -> None:
         if self.hidden:
             if self.focused:
                 self.exit_box(False)
             return
-
-        if self.is_label and self.focused:
-            self.exit_box(False)
-
-        if not self.is_label and self.mouse_hovering:
-            _pygame.mouse.set_cursor(_pygame.SYSTEM_CURSOR_IBEAM)
         
         if self.size[0] <= 0 or self.size[1] <= 0:
             return
@@ -2147,7 +2304,7 @@ class Bar(UIElement):
         elif event.type == _pygame.MOUSEBUTTONUP and event.button == 1:
             self.resizing = False
         elif event.type == _pygame.MOUSEMOTION and self.resizing:
-            relative_x = _pygame.mouse.get_pos()[0] - self.get_screen_position()[0]
+            relative_x = get_mouse_position()[0] - self.get_screen_position()[0]
             self.bar_percent = max(0.0, min(1.0, relative_x / self.size[0]))
 
     def draw(self, target_surface: _pygame.Surface=None):
@@ -2170,7 +2327,6 @@ class Menu(UIElement):
         self.scroll_y = 0
         self.scrollable = True
         self.max_scroll = max_scroll
-        self.layout = None
         self.focused = False
         self.current_scrollbar_rect = None
         self.scrollbar_dragging = False
@@ -2251,11 +2407,6 @@ class Menu(UIElement):
 
             self.scroll_y = (percent * self.max_scroll)
 
-    def apply_layout(self, layout_class: type, *args: tuple[_Any], **kwargs: dict[str, _Any]) -> _Self:
-        layout = layout_class(self, *args, **kwargs)
-        self.layout = layout
-        return self
-
     def draw_scrollbar_rect(self, target_surface: _pygame.Surface) -> None:
         '''
             This should be used in any practical sense. This is meant for testing on screen position.
@@ -2274,9 +2425,6 @@ class Menu(UIElement):
         self.scroll_y += self.scroll_velocity
 
         self.scroll_y = min(self.max_scroll, max(0, self.scroll_y))
-        
-        if self.layout is not None and len(self.children) > 0:
-            self.layout.update()
 
         self.surface.fill(COLORS["TRANSPARENT"])
 
@@ -2439,9 +2587,9 @@ class SubWindow(Menu):
             self.screen_position[1] + self._minimize_button_position[1]
         )
 
-        if self._close_button.get_rect(topleft=final_position).collidepoint(_pygame.mouse.get_pos()):
+        if self._close_button.get_rect(topleft=final_position).collidepoint(get_mouse_position()):
             self.destroy()
-        if self._minimize_button.get_rect(topleft=final_position2).collidepoint(_pygame.mouse.get_pos()):
+        if self._minimize_button.get_rect(topleft=final_position2).collidepoint(get_mouse_position()):
             self.minimized = not self.minimized
 
     def handle_event(self, event: _pygame.event.Event):
@@ -2458,9 +2606,6 @@ class SubWindow(Menu):
         if self.size[0] <= 0 or self.size[1] <= 0: return
         self._minimize_button_position = (self.size[0] - self._close_button.get_width()-50, 5)
         self._close_button_position = (self.size[0] - self._close_button.get_width()-20, 5)
-        
-        if self.layout is not None and len(self.children) > 0:
-            self.layout.update()
 
         self.surface.fill(COLORS["TRANSPARENT"])
         self.sub_surface.fill(COLORS["TRANSPARENT"])
@@ -2565,102 +2710,6 @@ class VideoElement(UIElement):
         self._base_draw(target_surface)
 
 # ----------------------------
-# LAYOUTS
-# ----------------------------
-
-class VerticalLayout(MenuLayout):
-    '''
-        Forms menu children in a downward chart formation based off mode enums.
-    '''
-    def __init__(self, parent: Menu, item_gap: int=25, horizontal_padding: int=5, vertical_padding: int=5, horizontal_mode: LayoutAlignment=LayoutAlignment.left, vertical_mode: LayoutAlignment=LayoutAlignment.up):
-        super().__init__(parent)
-        self.horizontal_mode = horizontal_mode
-        self.vertical_mode = vertical_mode
-        self.item_gap = item_gap
-        self.horizontal_padding = horizontal_padding
-        self.vertical_padding = vertical_padding
-    
-    def disable(self) -> _Self:
-        super().switch_enabled(False)
-        for i, element in enumerate(self.parent.children):
-            if element.position != self.origin_pos_elements[i]:
-                element.position = self.origin_pos_elements[i]
-        
-        return self
-
-    def base_update(self) -> None:
-        y = 0
-
-        self.parent.update_max_scroll()
-
-        if self.vertical_mode == LayoutAlignment.up:
-            y = self.vertical_padding
-        elif self.vertical_mode == LayoutAlignment.center:
-            y = self.parent.size[1]/2
-        elif self.vertical_mode == LayoutAlignment.down:
-            y = self.parent.size[1]
-
-        for element in self.parent.children:
-            if not isinstance(element, UIElement): continue
-            if element.hidden: continue
-
-            new_pos = (element.position[0], y)
-            if self.vertical_mode == LayoutAlignment.down:
-                new_pos = (new_pos[0], y-element.size[1])
-            elif self.vertical_mode == LayoutAlignment.center:
-                new_pos = (new_pos[0], new_pos[1]-element.size[1]/2)
-            elif self.vertical_mode == LayoutAlignment.up:
-                new_pos = (new_pos[0], y)
-
-            if self.horizontal_mode == LayoutAlignment.left:
-                new_pos = (self.horizontal_padding, y)
-            elif self.horizontal_mode == LayoutAlignment.center:
-                new_pos = (self.parent.size[0]/2-element.size[0]/2, y)
-            elif self.horizontal_mode == LayoutAlignment.right:
-                new_pos = (self.parent.size[0]-element.size[0]-self.parent.scrollbar_size[0]-self.horizontal_padding, y)
-            
-            element.position = new_pos
-            if self.vertical_mode == LayoutAlignment.down:
-                y -= self.item_gap + element.surface.get_height()
-            else:
-                y += self.item_gap + element.surface.get_height()
-
-class FlowLayout(MenuLayout):
-    '''
-        Forms menu children in a formation left to right from top to bottom based of if its off the menu size.
-    '''
-    def __init__(self, parent: Menu, row_gap: int=30, vertical_item_gap: int=25, horizontal_item_gap: int=30):
-        super().__init__(parent)
-        self.horizontal_item_gap = horizontal_item_gap
-        self.vertical_item_gap = vertical_item_gap
-        self.row_gap = row_gap
-
-    def base_update(self) -> None:
-        x = self.horizontal_padding
-        y = self.vertical_padding
-
-        self.parent.update_max_scroll()
-
-        for element in self.parent.children:
-            if not isinstance(element, UIElement): continue
-            if element.hidden: continue
-
-            new_pos = (element.position[0], element.position[1])
-
-            if x > self.parent.surface.get_width():
-                y += self.row_gap + self.vertical_item_gap
-                x = self.horizontal_padding
-
-            element.position = (x, y)
-
-            if element.position[0] + element.size[0] > self.parent.surface.get_width():
-                y += self.row_gap + self.vertical_item_gap + element.size[1]
-                x = self.horizontal_padding
-                element.position = (x, y)
-
-            x += element.surface.get_width() + self.horizontal_item_gap
-
-# ----------------------------
 # HELPERS
 # ----------------------------
 
@@ -2705,7 +2754,7 @@ def draw_tree_view(tree_view: list[tuple[UIElement, int]], surface: _pygame.Surf
         draw_text(text, (text_offset[0]+entry[1]*25, y), COLORS["WHITE"], surface, font)
         y += 15
 
-print(f"SparseGUI v1.3.5 (pygame {_pygame.ver}, Python {_sys.version[0:6]})")
+print(f"SparseGUI v1.3.7 (pygame {_pygame.ver}, Python {_sys.version[0:6]})")
 
 # Defining what is imported if import * is used on this module
 __all__: list[str] = [name for name, obj in globals().items() if not (name[0] == "_" or name.startswith("_"))]
