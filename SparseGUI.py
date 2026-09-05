@@ -874,10 +874,8 @@ class UIElement:
         '''
         self.surface.fill(COLORS["TRANSPARENT"])
 
-        self.draw_elements(target_surface)
+        self.draw_elements(self.surface)
         self._base_draw(target_surface)
-
-        target_surface.blit(self.surface, (self.position[0], self.position[1]-self.get_menu_scroll()))
 
     def set_z(self, z: int) -> _Self:
         self.Z = z
@@ -1325,10 +1323,10 @@ class ImageLabel(UIElement):
     '''
     def __init__(self, parent: UIElement=None, size: Coordinate=(100, 100), position: Coordinate=(0, 0), 
                 stroke_thickness: int = 4, stroke_color: tuple[int, int, int]=COLORS["BLACK"], stroke_transparency: float=1, 
-                children: list[UIElement]=None, name: str="Image Label", image: _pygame.Surface=None):
+                children: list[UIElement]=None, name: str="ImageLabel", image: _pygame.Surface=None):
         super().__init__(parent, size, position, (0, 0, 0, 0), 0, 0, stroke_thickness, stroke_transparency, stroke_color, children, name)
-        self._image: _pygame.Surface = image.convert_alpha() if image else _pygame.Surface((0, 0)) 
-        self.set_size(size)
+        self._image: _pygame.Surface = image.convert_alpha() if image else _pygame.Surface(self.size)
+        self.on_property_changed.connect(self._proptery_changed)
 
     @property
     def image(self):
@@ -1338,17 +1336,19 @@ class ImageLabel(UIElement):
     def image(self, value: _pygame.Surface):
         self._image = _pygame.transform.scale(value, self.size)
 
-    def set_size(self, size: Coordinate) -> _Self:
-        self.size = size
-        self.image = self._image
-        return self
+    def _proptery_changed(self, name: str, value: _Any):
+        if name != "size":
+            return
+
+        self.image = self.image
 
     def handle_event(self, event: _pygame.event.Event):
         self.handle_event_components(event)
 
     def draw(self, target_surface: _pygame.Surface):
-        self.surface.fill(self.background_color)
+        self.surface.fill(COLORS["TRANSPARENT"])
         self.surface.blit(self._image, (0, 0))
+
         self.draw_elements(self.surface)
         self._base_draw(target_surface)
 
@@ -1372,7 +1372,7 @@ class TextButton(UIElement):
             min(255, self.background_color[1] + 45),
             min(255, self.background_color[2] + 45)
         )
-        self.cached_text_surface = self.text_font.render(self.text, True, COLORS["WHITE"])
+        self.cached_text_surface = self.text_font.render(text, True, COLORS["WHITE"])
         self.text = self._text
         self._final_color = self.background_color
 
@@ -1391,13 +1391,7 @@ class TextButton(UIElement):
     
     @text.setter
     def text(self, value: str):
-        if value == self._text:
-            return
-        
         self._text = value
-        text_size = self.text_font.size(value)
-        if text_size[0] > self.size[0]:
-            self.size = (text_size[0], self.size[1])
         self.cached_text_surface = self.text_font.render(self.text, True, COLORS["WHITE"])
 
     def get_text_y_pos(self) -> float:
@@ -1416,17 +1410,17 @@ class TextButton(UIElement):
     def get_text_pos(self) -> Coordinate:
         '''
             Returns cached text surface based off text alignment.
-        '''
+        ''' 
 
         match self.text_alignment_x:
             case TextXAlignment.left:
-                return (0, self.get_text_y_pos())
+                return (self.border_radius, self.get_text_y_pos())
             case TextXAlignment.middle:
                 return (self.surface.get_width()/2-self.cached_text_surface.get_width()/2, 
                         self.get_text_y_pos())
             case TextXAlignment.right:
                 return (
-                    self.size[0]-self.cached_text_surface.width,
+                    self.size[0]-self.cached_text_surface.width-self.border_radius,
                     self.get_text_y_pos()
                 )
 
@@ -1479,7 +1473,7 @@ class ImageButton(ImageLabel):
 
 class TextBox(UIElement):
     '''
-        A text entry for text which supports single line entry and multiline entry.
+        A text entry for text which supports single line entry and multiline entry. Serves as a text label to.
     '''
 
     def __init__(self, position=(0, 0), size=(250, 25), parent=None,
@@ -1942,7 +1936,7 @@ class TextBox(UIElement):
             else:
                 self.clear_selection()
 
-        if event.type == _pygame.MOUSEWHEEL and self.focused and self.multi_line:
+        if event.type == _pygame.MOUSEWHEEL and self.focused and self.multi_line and not self.is_label:
             self.text_scroll_vy += event.y*-3
  
         if event.type == _pygame.MOUSEBUTTONUP and event.button == 1:
@@ -2135,9 +2129,6 @@ class TextBox(UIElement):
             return cached
 
         surf = self._get_surf_line(line)
-
-        if len(self._line_cache) > self._MAX_CACHE:
-            self._line_cache.clear()
         
         self._line_cache[line] = surf
 
@@ -2180,24 +2171,20 @@ class TextBox(UIElement):
             _pygame.draw.rect(self.surface, self.highlight_color,
                                (x0 + self._text_offset, 1, x1 - x0, self.surface.get_height()))
 
-        if len(self.text) > 0:
-            x = self._text_offset
-            font = self.font if not self.is_label else _pygame.font.SysFont(self.font.name, self.size[1]-round(len(self.text)*0.5))
-            # ^ Changes how the font based off label so text scales. MAY render long words weirdly
-            space_width = font.size(" ")[0]
+        x = self._text_offset
+        font = self.font if not self.is_label else _pygame.font.SysFont(self.font.name, self.size[1]-round(len(self.text)*0.5))
+        # ^ Changes how the font based off label so text scales. MAY render long words weirdly
+        space_width = font.size(" ")[0]
 
-            for word in self.text.split(" "):
-                surf = self._single_line_cache.get(word)
-                if not surf:
-                    surf = self.word_formatter(word, font, font.size(word))
-                    self._single_line_cache[word] = surf
+        for word in (self.text if len(self.text) > 0 else self.placeholder_text).split(" "):
+            surf = self._single_line_cache.get(word)
+            if not surf:
+                surf = self.word_formatter(word, font, font.size(word))
+                self._single_line_cache[word] = surf
 
-                self.surface.blit(surf, (x - self.scroll_x, self.size[1] / 2 - surf.get_height() / 2))
+            self.surface.blit(surf, (x - self.scroll_x, self.size[1] / 2 - surf.get_height() / 2))
 
-                x += surf.get_width() + space_width
-        else:
-            text_surface = self.font.render(self.placeholder_text, True, self.placeholder_color)
-            self.surface.blit(text_surface, (-self.text_scroll + self._text_offset, self.surface.get_height() / 2 - text_surface.get_height() / 2))
+            x += surf.get_width() + space_width
 
         if self.focused and self.cursor_visible and self.editable and not self.is_label:
             x_pos = self.get_pixel_x()
@@ -2208,7 +2195,7 @@ class TextBox(UIElement):
 
     def _draw_multi_line(self):
         self.max_scroll = self.surface.get_height() - 1
-        first = max(0, int(self.text_scroll // self.line_gap))
+        first = max(0, int(self.text_scroll / self.line_gap))
         count = int(self.surface.get_height() // self.line_gap) + 2
         last = min(len(self.lines), first + count)
 
@@ -2234,14 +2221,17 @@ class TextBox(UIElement):
 
                 _pygame.draw.rect(self.surface, self.highlight_color,
                                    (x0, y, max(2, x1 - x0), self.line_gap))
- 
-        for i in range(first, last):
-            line_y = i * self.line_gap - self.text_scroll
 
-            self.surface.blit(self._render_line(self.lines[i]), (0, line_y))
+        if self.text:
+            for i in range(first, last):
+                line_y = i * self.line_gap - self.text_scroll
+                self.surface.blit(self._render_line(self.lines[i]), (self._text_offset, line_y))
+        else:
+            self.surface.blit(self.font.render(self.placeholder_text, True, self.placeholder_color), (self._text_offset, 0))
 
-        scrollbar_rect = self._get_scrollbar_rect(self.text_scroll, self.max_scroll, self.scrollbar_width)
-        _pygame.draw.rect(self.surface, COLORS["BLACK"], scrollbar_rect)
+        if not self.is_label:
+            scrollbar_rect = self._get_scrollbar_rect(self.text_scroll, self.max_scroll, self.scrollbar_width)
+            _pygame.draw.rect(self.surface, COLORS["BLACK"], scrollbar_rect)
 
     def draw(self, target_surface=None) -> None:
         if self.hidden:
@@ -2266,6 +2256,9 @@ class TextBox(UIElement):
                 self.cursor_visible = not self.cursor_visible
             elif not self.focused:
                 self.cursor_visible = True
+        else:
+            if self.text_scroll:
+                self.text_scroll = 0
  
         self.draw_elements(self.surface)
         self._base_draw(target_surface, self.focused_color if self.focused else self.background_color)
