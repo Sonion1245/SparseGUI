@@ -2237,7 +2237,7 @@ class TextBox(UIElement):
                                (x0 + self._text_offset, 1, x1 - x0, self.surface.get_height()))
 
         x = self._text_offset
-        font = self.font if not self.is_label else _pygame.font.SysFont(self.font.name, self.size[1]-round(len(self.text)*0.5))
+        font = self.font if not self.is_label else _pygame.font.SysFont(self.font.name, self.size[1]-round(len(self.text)*0.35))
         # ^ Changes how the font based off label so text scales. MAY render long words weirdly
         space_width = font.size(" ")[0]
 
