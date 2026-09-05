@@ -51,11 +51,12 @@ def main():
     # Add SparseGUI elements inside the list for them to appear inside the screen.
     # This will be the top level of the scene graph of the elements.
     canvas = SparseGUI.Canvas(WINDOW_SIZE, [
-        SparseGUI.SubWindow((150, 150), title="My Example SparseGUI Window!", children=[
-            SparseGUI.TextButton("Click me!", action=lambda: print("[EVENT LOG]: Click me clicked!"), background_color=(45, 45, 45)),
+        SparseGUI.SubWindow((150, 150), title="My Example SparseGUI Window!", border_radius=20, children=[
+            SparseGUI.TextButton("Click me!", action=lambda: print("[EVENT LOG]: Click me clicked!"), background_color=(45, 45, 45),
+                                 size=(100, 25)),
             SparseGUI.TextBox(on_focus_lost=lambda enter, _: print(f"[EVENT LOG]: Textbox lost focus, exited from enter: {enter}"), 
                               on_focus=lambda: print("[EVENT LOG]: Textbox gained focus!"), clear_text_on_focus=False),
-            SparseGUI.TextBox().set_as_label(True).set_single_text("Text label!")
+            SparseGUI.TextBox(border_radius=20).set_as_label(True).set_single_text("Text label with round corners!")
         ]).add_component(SparseGUI.ResizeableComponent)[0].add_component(SparseGUI.VerticalSortComponnent)[0].set_scrollable(False) # Auto sorts the elements in positioning.
     ])
     canvas.children[0].drag_component.tween_position = True
@@ -89,6 +90,11 @@ def main():
     # Quit out the program and clean up pygame.
     pygame.quit()
     exit()
+
+# Running main.
+if __name__ == "__main__":
+    main()
+
 
 # Running main.
 if __name__ == "__main__":
