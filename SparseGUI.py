@@ -465,11 +465,13 @@ class UIElement:
         self.Z = 1
         self.border_radius = border_radius
         self.sync_mouse = True
+        self._long_hover_timer = _time.time()
 
         self._register_watch_property("size")
         self._register_watch_property("position")
         self.on_property_changed = Event()
         self.on_mouse_hover = Event()
+        self.on_long_hover = Event()
 
         for v in self.children:
             v.parent = self
@@ -843,6 +845,9 @@ class UIElement:
 
         elif not self.sync_mouse and self.mouse_hovering:
             self.mouse_hovering = False
+
+        if self.mouse_hovering and _time.time() - self._long_hover_timer > 2:
+            self.on_long_hover.fire()
         
         self.update_components(dt)
 
@@ -1004,6 +1009,45 @@ class UIElement:
     def __delete__(self, instance: _Self):
         self.destroy()
 
+class GUIButton(UIElement):
+    '''
+        The base class for a clickable element.
+    '''
+    def __init__(self, 
+                 parent: _Self | Canvas=None, size: Coordinate=(100, 50), position: Coordinate=(0, 0), 
+                 background_color: tuple[int, int, int]=None, background_transparency: float=1, stroke_thickness: int=4, stroke_transparency: float=1, 
+                 stroke_color: tuple[int, int, int] | None=None, children: list["UIElement"]=None, border_radius: int=0, name: str="UIElement",
+                 action: _Callable=lambda: print("I was clicked!"), selected_color: tuple[int, int, int] | None=None):
+        super().__init__(parent, size, position, background_color, background_transparency, stroke_thickness,
+                         stroke_transparency, stroke_color, children, border_radius, name)
+        self.on_click = Event()
+        self.on_right_click = Event()
+
+        self.clickable = True
+        self.click_component: ClickableComponent = self.add_component(ClickableComponent)[1]
+        self.click_component.should_click = lambda _: self.clickable
+        self.click_component.on_click = lambda: self.on_click.fire()
+        self.click_component.on_right_click = lambda: self.on_right_click.fire()
+        self.on_mouse_hover.connect(self._on_mouse_hover)
+        self.on_click.connect(action)
+
+        self.selected_color = selected_color or (
+            min(255, self.background_color[0] + 45),
+            min(255, self.background_color[1] + 45),
+            min(255, self.background_color[2] + 45)
+        )
+        self._final_color = self.background_color
+    
+    def _on_mouse_hover(self, entering, mouse_enter_pos):
+        self.click_component.on_mouse_hover(entering, mouse_enter_pos)
+
+        if not entering:
+            self._final_color = self.background_color
+
+    def draw(self, target_surface: _pygame.Surface):
+        self.draw_elements(target_surface)
+        self._base_draw(target_surface, self._final_color)
+
 class UIComponent:
     '''
         Base class for a UI componet. These modify theyre element (UIElement) in any way.\n
@@ -1111,6 +1155,9 @@ class ClickableComponent(UIComponent):
         '''
         return True
 
+    def on_right_click(self):
+        ...
+
     @staticmethod
     def _clickable(element):
         return element.clickable if isinstance(element, TextButton) else False
@@ -1120,18 +1167,15 @@ class ClickableComponent(UIComponent):
             return False
     
         for element in self.element.children:
-            if self._clickable(element):
-                if element.mouse_hovering:
-                    return True
+            if self._clickable(element) and element.mouse_hovering:
+                return True
         
-        if isinstance(self.element.parent, UIElement):
-            for element in self.element.parent.children:
-                if element is self.element:
-                    continue
+        for element in self.element.parent.children:
+            if element is self.element:
+                continue
 
-                if self._clickable(element):
-                    if element.mouse_hovering:
-                        return True
+            if self._clickable(element) and element.mouse_hovering:
+                return True
         
         return False
 
@@ -1146,12 +1190,15 @@ class ClickableComponent(UIComponent):
             set_cursor_hand(entering)
 
     def handle_event(self, event: _pygame.event.Event):
-        if event.type == _pygame.MOUSEBUTTONUP and event.button == 1 and self.active:
+        if event.type == _pygame.MOUSEBUTTONUP and self.active:
             if self.is_icons_clickable():
                 return
 
             if self.element.mouse_hovering and self.should_click(event.pos):
-                self.on_click()
+                if event.button == 1:
+                    self.on_click()
+                elif event.button == 3:
+                    self.on_right_click()
 
 class ResizeableComponent(UIComponent):
     '''
@@ -1318,15 +1365,18 @@ class VerticalSortComponnent(UIComponent):
 
 class ImageLabel(UIElement):
     '''
-        Displayable image as a element.\n
-        **NOTE: This is not compatable with border radius.**
+        Displayable image as a element.
     '''
     def __init__(self, parent: UIElement=None, size: Coordinate=(100, 100), position: Coordinate=(0, 0), 
-                stroke_thickness: int = 4, stroke_color: tuple[int, int, int]=COLORS["BLACK"], stroke_transparency: float=1, 
+                stroke_thickness: int = 4, stroke_color: tuple[int, int, int]=COLORS["BLACK"], stroke_transparency: float=1, border_radius: int=0,
                 children: list[UIElement]=None, name: str="ImageLabel", image: _pygame.Surface=None):
-        super().__init__(parent, size, position, (0, 0, 0, 0), 0, 0, stroke_thickness, stroke_transparency, stroke_color, children, name)
-        self._image: _pygame.Surface = image.convert_alpha() if image else _pygame.Surface(self.size)
+        super().__init__(parent, size, position, (0, 0, 0, 0), 0, stroke_thickness, stroke_transparency, stroke_color, children, border_radius, 
+                         name)
+        self._load_image(image)
         self.on_property_changed.connect(self._proptery_changed)
+
+    def _load_image(self, image: _pygame.Surface):
+        self._image = _pygame.transform.scale(image.convert_alpha(), self.size)
 
     @property
     def image(self):
@@ -1334,7 +1384,7 @@ class ImageLabel(UIElement):
 
     @image.setter
     def image(self, value: _pygame.Surface):
-        self._image = _pygame.transform.scale(value, self.size)
+        self._image = _pygame.transform.scale(value.convert_alpha(), self.size)
 
     def _proptery_changed(self, name: str, value: _Any):
         if name != "size":
@@ -1345,45 +1395,54 @@ class ImageLabel(UIElement):
     def handle_event(self, event: _pygame.event.Event):
         self.handle_event_components(event)
 
+    def _draw_image(self):
+        if self.border_radius > 0:
+            mask = _pygame.Surface(self.size, _pygame.SRCALPHA)
+
+            _pygame.draw.rect(
+                mask,
+                (255, 255, 255, 255),
+                mask.get_rect(),
+                border_radius=self.border_radius
+            )
+
+            self.surface.blit(self._image, (0, 0))
+            self.surface.blit(
+                mask,
+                (0, 0),
+                special_flags=_pygame.BLEND_RGBA_MULT
+            )
+        else:
+            self.surface.blit(self._image, (0, 0))
+
     def draw(self, target_surface: _pygame.Surface):
         self.surface.fill(COLORS["TRANSPARENT"])
-        self.surface.blit(self._image, (0, 0))
 
+        self._draw_image()
         self.draw_elements(self.surface)
         self._base_draw(target_surface)
 
-class TextButton(UIElement):
+class TextButton(GUIButton):
     '''
-        A clickable button that displays text. This should be used when you want a action to happen when an element is clicked on.
+        A clickable button that displays text.
     '''
-    def __init__(self, text: str="Hello world!", position: Coordinate=(0,0), action: _Callable=lambda: print("I was clicked!"), size: Coordinate=(100, 35), 
+    def __init__(self, text: str="Hello world!", position: Coordinate=(0, 0), action: _Callable=lambda: print("I was clicked!"), size: Coordinate=(100, 50), 
                  background_color: tuple[int, int, int]=None, background_transparency: float=1, selected_color: tuple[int, int, int]=None, stroke_color:  tuple[int, int, int]=COLORS["BLACK"], stroke_thickness: int=4, stroke_transparency: float=1,
                  parent: UIElement=None, clickable: bool=True, children: list[UIElement]=None, border_radius: int=0, name: str="Icon", font: _pygame.font.Font | None=None,
-                 text_alignment: tuple[TextXAlignment, TextYAlignment]=(TextXAlignment.middle, TextYAlignment.middle)):
-        super().__init__(parent, size, position, background_color, background_transparency, stroke_thickness, stroke_transparency, stroke_color, children=children, name=name, border_radius=border_radius)
-        self.on_click = Event()
-        self.hidden = False
-        self.clickable = clickable
+                 text_alignment: tuple[TextXAlignment, TextYAlignment]=(TextXAlignment.middle, TextYAlignment.middle),
+                 text_color: tuple[int, int, int]=COLORS["WHITE"]):
+        super().__init__(parent, size, position, background_color, background_transparency, stroke_thickness, stroke_transparency, stroke_color, children=children, name=name, 
+                         border_radius=border_radius, action=action, selected_color=selected_color)
         self._text = text
+        self._text_color = text_color
         self.text_font = font or _global_font
-        self.action = action
-        self.selected_color = selected_color or (
-            min(255, self.background_color[0] + 45),
-            min(255, self.background_color[1] + 45),
-            min(255, self.background_color[2] + 45)
-        )
-        self.cached_text_surface = self.text_font.render(text, True, COLORS["WHITE"])
+
+        self.cached_text_surface = self.text_font.render(text, True, self.text_color)
         self.text = self._text
         self._final_color = self.background_color
 
-        self.click_component: ClickableComponent = self.add_component(ClickableComponent)[1]
-        self.click_component.should_click = lambda _: self.on_click.fire()
-        self.click_component.on_click = self.action
-
         self.text_alignment_x = text_alignment[0]
         self.text_alignment_y = text_alignment[1]
-        self.on_mouse_hover.connect(self._on_mouse_hover)
-        self.on_click.connect(action)
 
     @property
     def text(self):
@@ -1392,7 +1451,16 @@ class TextButton(UIElement):
     @text.setter
     def text(self, value: str):
         self._text = value
-        self.cached_text_surface = self.text_font.render(self.text, True, COLORS["WHITE"])
+        self.cached_text_surface = self.text_font.render(self.text, True, self.text_color)
+
+    @property
+    def text_color(self):
+        return self._text_color
+
+    @text_color.setter
+    def text_color(self, value: tuple[int, int, int]):
+        self._text_color = value
+        self.cached_text_surface = self.text_font.render(self.text, True, self.text_color)
 
     def get_text_y_pos(self) -> float:
         '''
@@ -1429,12 +1497,6 @@ class TextButton(UIElement):
 
         if event.type == _pygame.MOUSEBUTTONUP and self.mouse_hovering:
             self._final_color = self.selected_color
-    
-    def _on_mouse_hover(self, entering, mouse_enter_pos):
-        self.click_component.on_mouse_hover(entering, mouse_enter_pos)
-
-        if not entering:
-            self._final_color = self.background_color
 
     def draw(self, target_surface: _pygame.Surface) -> None:
         if self.hidden: return
@@ -1450,26 +1512,29 @@ class TextButton(UIElement):
         self.draw_elements(self.surface)
         self._base_draw(target_surface, self._final_color)
 
-class ImageButton(ImageLabel):
+class ImageButton(ImageLabel, GUIButton):
     '''
         A clickable button that displays an image.\n
-        **NOTE: This is not compatable with border radius.**
     '''
-    def __init__(self, parent: UIElement=None, size: Coordinate=(100, 35), position: Coordinate=(0, 0), 
-            stroke_thickness: int = 4, stroke_color: tuple[int, int, int] = COLORS["BLACK"], 
-            children: list[UIElement]=None, name: str="Image Label", image: _pygame.Surface=None, clickable: bool=True, action: _Callable=lambda: print("I was clicked!")):
-        super().__init__(parent, size, position, stroke_thickness, stroke_color, 1, children, name, image)
-        self.hidden = False
-        self.clickable = clickable
-        self.action = action
-
-        self.click_component = self.add_component(ClickableComponent)[1]
-        self.click_component.should_click = lambda _: self.clickable
-        self.click_component.on_click = self.action
-        self.on_mouse_hover.connect(self._on_mouse_hover)
+    def __init__(self, parent: UIElement=None, size: Coordinate=(100, 50), position: Coordinate=(0, 0), 
+            stroke_thickness: int = 4, stroke_transparency: float=1, stroke_color: tuple[int, int, int] = COLORS["BLACK"], background_color: tuple[int, int, int] | None=None,
+            background_transparency: float=1, border_radius: int=0,
+            children: list[UIElement]=None, name: str="Image Label", image: _pygame.Surface | None=None, action: _Callable=lambda: print("I was clicked!")):
+        GUIButton.__init__(self, parent, size, position, background_color, background_transparency, stroke_thickness, stroke_transparency, 
+                           stroke_color, children, border_radius, name, action, COLORS["TRANSPARENT"])        
+        
+        self._load_image(image)
 
     def _on_mouse_hover(self, entering, mouse_enter_pos):
         self.click_component.on_mouse_hover(entering, mouse_enter_pos)
+
+    def draw(self, target_surface: _pygame.Surface):
+        self.surface.fill(COLORS["TRANSPARENT"])
+
+        self._draw_image()
+        self.draw_elements(target_surface)
+        
+        self._base_draw(target_surface, self._final_color)
 
 class TextBox(UIElement):
     '''
@@ -2435,12 +2500,13 @@ class CheckBox(TextButton):
         A check button which holds a True or False value. This should be used for toggleable values from the user.
     '''
     def __init__(self, text: str="Enabled", position: Coordinate=(0, 0), parent: UIElement=None, checked: bool=False, 
-                 on_flip: _Callable=lambda enabled: print(enabled), size: Coordinate=(160, 30), border_radius: int=0, background_transparency: float=1, stroke_transparency: float=1):
+                 on_flip: _Callable=lambda enabled: print(enabled), size: Coordinate=(160, 30), border_radius: int=0, background_transparency: float=1, stroke_transparency: float=1,
+                 background_color: tuple[int, int, int]=COLORS["LIGHTER-GRAY"], name: str="CheckBox"):
         def flip() -> None: 
             self._checked = not self._checked
             self.on_flip.fire(self.get_value())
 
-        super().__init__(text, position, size=size, parent=parent, clickable=True, action=flip, background_color=COLORS["LIGHTER-GRAY"], border_radius=border_radius, stroke_transparency=stroke_transparency, background_transparency=background_transparency)
+        super().__init__(text, position, size=size, parent=parent, clickable=True, action=flip, background_color=background_color, border_radius=border_radius, stroke_transparency=stroke_transparency, background_transparency=background_transparency)
 
         self.on_flip = Event()
 
@@ -2747,7 +2813,7 @@ def draw_tree_view(tree_view: list[tuple[UIElement, int]], surface: _pygame.Surf
         draw_text(text, (text_offset[0]+entry[1]*25, y), COLORS["WHITE"], surface, font)
         y += 15
 
-print(f"SparseGUI v1.3.7 (pygame {_pygame.ver}, Python {_sys.version[0:6]})")
+print(f"SparseGUI v1.3.8 (pygame {_pygame.ver}, Python {_sys.version[0:6]})")
 
 # Defining what is imported if import * is used on this module
 __all__: list[str] = [name for name, obj in globals().items() if not (name[0] == "_" or name.startswith("_"))]
