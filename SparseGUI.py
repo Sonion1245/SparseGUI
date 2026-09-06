@@ -228,7 +228,7 @@ class VideoElementData:
         self.frame_rate = frame_rate
 
     def get_video_frame(self, frame: int) -> _pygame.Surface:
-        return self.frames[min(frame, len(self.frames)-1)]
+        return self.frames[min(max(frame, 0), len(self.frames)-1)]
 
 class Connection:
     '''
@@ -471,6 +471,7 @@ class UIElement:
         self._register_watch_property("position")
         self.on_property_changed = Event()
         self.on_mouse_hover = Event()
+        self._long_hovering = False
         self.on_long_hover = Event()
 
         for v in self.children:
@@ -608,8 +609,7 @@ class UIElement:
         height = self.surface.get_height()
         content_height = height + max_scroll
 
-        min_thumb = 0
-        thumb_height = max(min_thumb, height * (height / content_height)) if content_height > 0 else height
+        thumb_height = max(25, height * (height / content_height)) if content_height > 0 else height
         thumb_height = min(thumb_height, height)
 
         try:
@@ -787,29 +787,45 @@ class UIElement:
         result = True
         current = self.parent
 
-        while current and result:
-            items = current.children
+        items = current.children
 
-            for element in items:
-                if element is self:
-                    continue
+        for element in items:
+            if element is self:
+                continue
 
-                if not element.hidden:
-                    if element.mouse_hovering and element.Z > self.Z:
-                        result = False
-                    elif element.mouse_hovering and element.Z == self.Z and self in items and items.index(element) > items.index(self):
-                        # ^ This branch is used for when the elements share a Z layer, in this case 
-                        # comparing when the elements were added is needed for overlap detection.
-                        result = False
+            if not element.hidden:
+                if element.mouse_hovering and element.Z > self.Z:
+                    result = False
+                elif element.mouse_hovering and element.Z == self.Z and items.index(element) > items.index(self):
+                    # ^ This branch is used for when the elements share a Z layer, in this case 
+                    # comparing when the elements were added is needed for overlap detection.
+                    result = False
 
-            current = current.parent if hasattr(current, "parent") else None
+        current = current.parent if hasattr(current, "parent") else None
 
         return self.surface.get_rect(topleft=self.screen_position).collidepoint(get_mouse_position()) and result
 
     def hide(self) -> _Self:
-        if self.mouse_hovering and self.mouse_over_parent():
-            _pygame.mouse.set_system_cursor(_pygame.SYSTEM_CURSOR_ARROW)
+        '''
+            Hides the element.
+        '''
+        if self.mouse_hovering:
+            _pygame.mouse.set_cursor(_pygame.SYSTEM_CURSOR_ARROW)
         self.hidden = True
+        return self
+
+    def show(self) -> _Self:
+        '''
+            Shows the element.
+        '''
+        self.hidden = False
+        return self
+
+    def toggle_visiblity(self) -> _Self:
+        '''
+            Toggles visibility.
+        '''
+        self.hidden = not self.hidden
         return self
 
     def _register_watch_property(self, name: str):
@@ -836,18 +852,21 @@ class UIElement:
             if not self.mouse_hovering and mouse_over:
                 args = (True, self.local_mouse_position)
                 self.on_mouse_hover.fire(*args)
+                self._long_hover_timer = _time.time()
 
             if self.mouse_hovering and not mouse_over:
                 args = (False, self.local_mouse_position)
                 self.on_mouse_hover.fire(*args)
+                self._long_hovering = False
             
             self.mouse_hovering = mouse_over
 
+            if self.mouse_hovering and _time.time() - self._long_hover_timer > 2 and not self._long_hovering:
+                self.on_long_hover.fire()
+                self._long_hovering = True
+
         elif not self.sync_mouse and self.mouse_hovering:
             self.mouse_hovering = False
-
-        if self.mouse_hovering and _time.time() - self._long_hover_timer > 2:
-            self.on_long_hover.fire()
         
         self.update_components(dt)
 
@@ -916,21 +935,19 @@ class UIElement:
         self.handle_event_components(event)
 
         for element in self.children:
-            if not hasattr(element, "handle_event"): 
+            if not hasattr(element, "handle_event"):
                 continue
 
-            if self.child_off_bounds(element) and not isinstance(element, SubWindow): 
+            if self.child_off_bounds(element) and not isinstance(element, SubWindow):
                 continue
 
-            if element.hidden: 
+            if element.hidden:
                 continue
 
-            if element.size[0] <= 0 and element.size[1] <= 0: 
+            if element.size[0] <= 0 and element.size[1] <= 0:
                 continue
 
             element.handle_event(event)
-            if element.mouse_hovering:
-                break
 
     def get_local_mouse_position(self) -> Coordinate:
         '''
@@ -1314,37 +1331,23 @@ class VerticalSortComponnent(UIComponent):
     '''
         Sorts the parents children based off horizontal and vertical sort modes
     '''
-    def __init__(self, element: UIElement, horizontal_padding: int=10, vertical_padding: int=10, row_gap: int=10,
-                 vertical_mode: LayoutAlignment=LayoutAlignment.up, horizontal_mode: LayoutAlignment=LayoutAlignment.left, item_gap: int=10):
+    def __init__(self, element: UIElement, horizontal_padding: int=10, vertical_padding: int=10, row_gap: int=10, 
+                 horizontal_mode: LayoutAlignment=LayoutAlignment.left, item_gap: int=10):
         super().__init__(element, True)
         self.horizontal_padding = horizontal_padding
         self.vertical_padding = vertical_padding
-        self.vertical_mode = vertical_mode
         self.horizontal_mode = horizontal_mode
         self.item_gap = item_gap
 
     def update(self, _: float):
-        y = 0
-
-        if self.vertical_mode == LayoutAlignment.up:
-            y = self.vertical_padding
-        elif self.vertical_mode == LayoutAlignment.center:
-            y = self.element.size[1]/2
-        elif self.vertical_mode == LayoutAlignment.down:
-            y = self.element.size[1]
+        y = self.vertical_padding
+        new_pos = (self.horizontal_padding, y)
 
         for element in self.element.children:
             if not isinstance(element, UIElement): continue
             if element.hidden: continue
 
             new_pos = (element.position[0], y)
-            if self.vertical_mode == LayoutAlignment.down:
-                new_pos = (new_pos[0], y-element.size[1])
-            elif self.vertical_mode == LayoutAlignment.center:
-                new_pos = (new_pos[0], new_pos[1]-element.size[1]/2)
-            elif self.vertical_mode == LayoutAlignment.up:
-                new_pos = (new_pos[0], y)
-
             if self.horizontal_mode == LayoutAlignment.left:
                 new_pos = (self.horizontal_padding, y)
             elif self.horizontal_mode == LayoutAlignment.center:
@@ -1354,11 +1357,7 @@ class VerticalSortComponnent(UIComponent):
                                                                                         if isinstance(self.element, Menu) else 0), y)
             
             element.position = new_pos
-            if self.vertical_mode == LayoutAlignment.down:
-                y -= self.item_gap + element.size[1]
-            else:
-                y += self.item_gap + element.size[1]
-
+            y +=self.item_gap + element.size[1]
 # ----------------------------
 # WIDGET SET
 # ----------------------------
@@ -1377,6 +1376,7 @@ class ImageLabel(UIElement):
 
     def _load_image(self, image: _pygame.Surface):
         self._image = _pygame.transform.scale(image.convert_alpha(), self.size)
+        self.image_transparency = 1
 
     @property
     def image(self):
@@ -1398,20 +1398,10 @@ class ImageLabel(UIElement):
     def _draw_image(self):
         if self.border_radius > 0:
             mask = _pygame.Surface(self.size, _pygame.SRCALPHA)
-
-            _pygame.draw.rect(
-                mask,
-                (255, 255, 255, 255),
-                mask.get_rect(),
-                border_radius=self.border_radius
-            )
+            _pygame.draw.rect(mask, (255, 255, 255, 255*self.image_transparency), mask.get_rect(), border_radius=self.border_radius)
 
             self.surface.blit(self._image, (0, 0))
-            self.surface.blit(
-                mask,
-                (0, 0),
-                special_flags=_pygame.BLEND_RGBA_MULT
-            )
+            self.surface.blit(mask, (0, 0), special_flags=_pygame.BLEND_RGBA_MULT)
         else:
             self.surface.blit(self._image, (0, 0))
 
@@ -1518,10 +1508,10 @@ class ImageButton(ImageLabel, GUIButton):
     '''
     def __init__(self, parent: UIElement=None, size: Coordinate=(100, 50), position: Coordinate=(0, 0), 
             stroke_thickness: int = 4, stroke_transparency: float=1, stroke_color: tuple[int, int, int] = COLORS["BLACK"], background_color: tuple[int, int, int] | None=None,
-            background_transparency: float=1, border_radius: int=0,
+            background_transparency: float=1, border_radius: int=0, selected_color: tuple[int, int, int] | None=None,
             children: list[UIElement]=None, name: str="Image Label", image: _pygame.Surface | None=None, action: _Callable=lambda: print("I was clicked!")):
         GUIButton.__init__(self, parent, size, position, background_color, background_transparency, stroke_thickness, stroke_transparency, 
-                           stroke_color, children, border_radius, name, action, COLORS["TRANSPARENT"])        
+                           stroke_color, children, border_radius, name, action, selected_color)        
         
         self._load_image(image)
 
@@ -1981,8 +1971,8 @@ class TextBox(UIElement):
             return
  
         if event.type == _pygame.MOUSEBUTTONDOWN and event.button == 1 and not self.hidden:
-            result = (self.mouse_hovering and self.editable) if not callable(self.on_selected) \
-                else self.on_selected(self, event, self.local_mouse_position) and self.mouse_hovering
+            result = self.mouse_hovering and self.editable if not callable(self.on_selected) \
+                else self.on_selected(self, self.local_mouse_position) and self.mouse_hovering
  
             if not result and self.focused:
                 self.exit_box(False)
@@ -1998,8 +1988,6 @@ class TextBox(UIElement):
                 self.set_cursor_position(event.pos)
                 self.selection_anchor = (self.cursor_line, self.cursor_colum)
                 self._mouse_selecting = True
-            else:
-                self.clear_selection()
 
         if event.type == _pygame.MOUSEWHEEL and self.focused and self.multi_line and not self.is_label:
             self.text_scroll_vy += event.y*-3
@@ -2216,6 +2204,10 @@ class TextBox(UIElement):
             _pygame.mouse.set_cursor(_pygame.SYSTEM_CURSOR_IBEAM)
 
         if self.multi_line:
+            if len(self._lines) * self.line_gap > self.size[1]:
+                self.max_scroll = (len(self._lines)-0.5) * self.line_gap - self.size[1]
+                # Calculates the max scroll to be set, this is done so all the lines can be shown.
+
             if self.text_scroll_vy > 0:
                 self.text_scroll_vy = max(self.text_scroll_vy - 0.15, 0)
             else:
@@ -2224,6 +2216,8 @@ class TextBox(UIElement):
             self.text_scroll += self.text_scroll_vy
             
             self.text_scroll = min(max(0, self.text_scroll), self.max_scroll)
+            if self.text_scroll == self.max_scroll:
+                self.text_scroll_vy = 0
         
         return super().update(dt, update_elements)
 
@@ -2233,7 +2227,7 @@ class TextBox(UIElement):
             x0 = self.font.size(self.text[:sc])[0] - self.scroll_x + self._text_offset
             x1 = self.font.size(self.text[:ec])[0] - self.scroll_x + self._text_offset
 
-            _pygame.draw.rect(self.surface, self.highlight_color,
+            _pygame.draw.rect(self.surface, self.highlight_color if self.focused else COLORS["LIGHTER-GRAY"],
                                (x0 + self._text_offset, 1, x1 - x0, self.surface.get_height()))
 
         x = self._text_offset
@@ -2259,7 +2253,6 @@ class TextBox(UIElement):
                                 self.surface.get_height() - self.surface.get_height() / 8), 2)
 
     def _draw_multi_line(self):
-        self.max_scroll = self.surface.get_height() - 1
         first = max(0, int(self.text_scroll / self.line_gap))
         count = int(self.surface.get_height() // self.line_gap) + 2
         last = min(len(self.lines), first + count)
@@ -2284,7 +2277,7 @@ class TextBox(UIElement):
                 x1 = self.font.size(line[:end_col])[0] if line else x0 + 6
                 y = i * self.line_gap - self.text_scroll
 
-                _pygame.draw.rect(self.surface, self.highlight_color,
+                _pygame.draw.rect(self.surface, self.highlight_color if self.focused else COLORS["LIGHTER-GRAY"],
                                    (x0, y, max(2, x1 - x0), self.line_gap))
 
         if self.text:
@@ -2410,7 +2403,7 @@ class Menu(UIElement):
             return self
 
         content_bottom = max(element.position[1] + element.size[1] for element in self.children if not element.hidden)
-        self.max_scroll = max(0, content_bottom - self.size[1]) + offset + 50
+        self.max_scroll = content_bottom + offset + 50
 
         return self
     
@@ -2425,22 +2418,11 @@ class Menu(UIElement):
         self.scroll_y = 0
         return self
 
-    def get_layout_name(self) -> str:
-        return self.layout.__class__.__name__
-
     def handle_event(self, event: _pygame.event.Event) -> None:
-        if not self._stop_handling_children_events:
-            self.handle_event_elements(event)
+        self.handle_event_elements(event)
 
         if event.type == _pygame.MOUSEBUTTONDOWN and event.button == 1 and not self.hidden and self.mouse_over_parent():
-            local_p = self.local_mouse_position if self.parent else event.pos
-
-            if not hasattr(self, "on_selected"):
-                result = self.mouse_hovering
-            else:
-                result = self.on_selected(self, event, local_p)
-            
-            self.focused = result
+            self.focused = self.mouse_hovering if not hasattr(self, "on_selected") else self.on_selected(self, event, self.local_mouse_position)
 
             if self.focused and self.scrollable and self.max_scroll > 0:
                 pos = self.local_mouse_position
@@ -2465,12 +2447,6 @@ class Menu(UIElement):
 
             self.scroll_y = (percent * self.max_scroll)
 
-    def draw_scrollbar_rect(self, target_surface: _pygame.Surface) -> None:
-        '''
-            This should be used in any practical sense. This is meant for testing on screen position.
-        '''
-        _pygame.draw.rect(target_surface, COLORS["WHITE"], self.current_scrollbar_rect)
-
     def draw(self, target_surface: _pygame.Surface=None) -> None:
         if self.hidden: return
         if self.size[0] <= 0 or self.size[1] <= 0: return
@@ -2490,7 +2466,8 @@ class Menu(UIElement):
         
         if self.scrollable and self.max_scroll > 0:
             scrollbar_rect = self._get_scrollbar_rect(self.scroll_y, self.max_scroll, self.scrollbar_width)
-            _pygame.draw.rect(self.surface, COLORS["WHITE"], scrollbar_rect, border_radius=15)
+
+            _pygame.draw.rect(self.surface, COLORS["BLACK"], scrollbar_rect, border_radius=15)
             self.current_scrollbar_rect = _pygame.Rect(*scrollbar_rect)
 
         self._base_draw(target_surface)
@@ -2813,7 +2790,7 @@ def draw_tree_view(tree_view: list[tuple[UIElement, int]], surface: _pygame.Surf
         draw_text(text, (text_offset[0]+entry[1]*25, y), COLORS["WHITE"], surface, font)
         y += 15
 
-print(f"SparseGUI v1.3.8 (pygame {_pygame.ver}, Python {_sys.version[0:6]})")
+print(f"SparseGUI v1.4.0 (pygame {_pygame.ver}, Python {_sys.version[0:6]})")
 
 # Defining what is imported if import * is used on this module
 __all__: list[str] = [name for name, obj in globals().items() if not (name[0] == "_" or name.startswith("_"))]
