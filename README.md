@@ -95,9 +95,4 @@ def main():
 if __name__ == "__main__":
     main()
 
-
-# Running main.
-if __name__ == "__main__":
-    main()
-
 ```
